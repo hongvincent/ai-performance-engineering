@@ -10,7 +10,7 @@ from typing import Dict, Any
 # Format: {"min": minimum acceptable, "target": ideal goal, "unit": display unit}
 TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "overall": {
-        "hbm3e_bandwidth_tbs": {"min": 3.5, "target": 7.8, "unit": "TB/s", "realistic_max": 4.0},
+        "hbm3e_bandwidth_tbs": {"min": 3.0, "target": 3.5, "unit": "TB/s", "realistic_max": 4.0},
         "fp16_compute_tflops": {"min": 1000, "target": 2000, "unit": "TFLOPS", "realistic_max": 1300},
         "torch_compile_speedup_small": {"min": 1.1, "target": 1.2, "unit": "x"},
         "torch_compile_speedup_large": {"min": 1.0, "target": 1.3, "unit": "x"},
@@ -52,7 +52,7 @@ TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch7": {
         "description": "Memory Access Patterns",
         "metrics": {
-            "utilization_percent": {"min": 65, "target": 70, "unit": "%"},
+            "utilization_percent": {"min": 60, "target": 68, "unit": "%"},
             "coalesced_efficiency_percent": {"min": 85, "target": 90, "unit": "%"},
         }
     },

@@ -106,38 +106,44 @@ def run_load_test(
         if rank == 0:
             expected = max(target_qps * interval, 0.0)
             num_requests = rng.poisson(expected)
-            prompt_lengths: List[int] = []
+            current_time = time.time()
+            base_request_id = generated_counter
+            request_specs: List[Dict[str, object]] = []
             for _ in range(num_requests):
                 prompt_len = int(rng.integers(min_prompt_len, max_prompt_len + 1))
-                if prompt_len >= server.max_seq_len:
+                if prompt_len <= 0 or prompt_len >= server.max_seq_len:
                     continue
-                prompt_lengths.append(prompt_len)
-            base_request_id = generated_counter
-            current_time = time.time()
+                request_idx = len(request_specs)
+                request_specs.append(
+                    {
+                        "request_id": f"req_{base_request_id + request_idx}",
+                        "prompt_len": prompt_len,
+                        "priority": (base_request_id + request_idx) % 4,
+                        "arrived_at": current_time,
+                    }
+                )
         else:
-            prompt_lengths = []
-            base_request_id = 0
-            current_time = 0.0
+            request_specs = None  # type: ignore
 
-        payload = [prompt_lengths, base_request_id, current_time]
-        dist.broadcast_object_list(payload, src=0)
-        prompt_lengths, base_request_id, current_time = payload
+        request_specs = _broadcast_requests(request_specs)  # type: ignore
 
-        for offset, prompt_len in enumerate(prompt_lengths):
-            request_id = f"req_{base_request_id + offset}"
+        for spec in request_specs:
+            prompt_len = int(spec["prompt_len"])
+            if prompt_len <= 0:
+                continue
             prompt_tokens = list(range(prompt_len))
             request = InferenceRequest(
-                request_id=request_id,
+                request_id=str(spec["request_id"]),
                 prompt_tokens=prompt_tokens,
                 max_new_tokens=max_new_tokens,
                 temperature=float(temperature),
                 top_k=50,
-                priority=(base_request_id + offset) % 4,
-                arrived_at=current_time,
+                priority=int(spec["priority"]),
+                arrived_at=float(spec["arrived_at"]),
             )
             server.scheduler.add_request(request)
 
-        generated_counter = base_request_id + len(prompt_lengths)
+        generated_counter += len(request_specs)
 
         # Continuous batching iteration (replicates serve_loop body)
         batch = server.scheduler.get_next_batch(server.kv_cache)

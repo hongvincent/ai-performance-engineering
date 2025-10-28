@@ -11,8 +11,11 @@
 # 1. Install (one command, auto-handles everything)
 sudo ./setup.sh
 
-# 2. Verify hardware
+# 2. Verify hardware (automatic during setup)
 nvidia-smi  # Should show 8x B200 GPUs
+./verify_pytorch.py   # Verify PyTorch & CUDA
+./verify_nvlink.py    # Verify NVLink (if multi-GPU)
+./verify_cutlass.py   # Verify CUTLASS backend
 
 # 3. Run tests
 ./run_all_tests.sh
@@ -25,8 +28,10 @@ python3 benchmark_peak.py
 ```bash
 sudo ./setup.sh   # Installs driver 580
 sudo reboot       # Load new driver
-sudo ./setup.sh   # Complete installation
+sudo ./setup.sh   # Complete installation + verification
 ```
+
+**Verification**: `setup.sh` automatically runs all verification scripts at the end of installation.
 
 ---
 

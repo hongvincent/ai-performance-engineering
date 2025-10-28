@@ -13,10 +13,6 @@ import os
 import sys
 import time
 
-# Add parent directory to sys.path to import arch_config from root
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from torch_compile_large_model import create_model
 
 QUICK_MODE = os.environ.get("TORCH_COMPILE_DEMO_QUICK", "0") == "1"
@@ -28,14 +24,10 @@ def configure_for_blackwell_peak_performance():
     print("Configuring PyTorch for Blackwell B200 Peak Performance")
     print("=" * 80)
     
-    if hasattr(torch.backends.cuda, "matmul") and hasattr(torch.backends.cuda.matmul, "fp32_precision"):
-        torch.backends.cuda.matmul.fp32_precision = 'tf32'
-    elif hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision('high')
-    if hasattr(torch.backends.cudnn, "conv") and hasattr(torch.backends.cudnn.conv, "fp32_precision"):
-        torch.backends.cudnn.conv.fp32_precision = 'tf32'
-    print("TF32 enabled")
+    # TF32 already configured by arch_config
+    print("TF32 enabled (via arch_config)")
     
+    # Flash Attention already configured by arch_config, but safe to call again
     torch.backends.cuda.enable_flash_sdp(True)
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     print("Flash Attention enabled")

@@ -35,12 +35,28 @@ def main() -> None:
     if not script_path.exists():
         raise SystemExit(f"Script not found: {script_path}")
 
+    # Ensure script-relative imports (e.g., arch_config) resolve when running from repo root
+    script_parent = script_path.parent
+    repo_root = script_parent.parent
+    for path in (script_parent, repo_root):
+        path_str = str(path)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
     # Apply environment overrides
     for assignment in args.env:
         if "=" not in assignment:
             raise SystemExit(f"Invalid --env assignment '{assignment}' (expected KEY=VALUE)")
         key, value = assignment.split("=", 1)
         os.environ[key] = value
+
+    # Add script directory and repo root to sys.path for imports
+    script_dir = script_path.parent
+    repo_root = Path.cwd()  # Assuming memory_profiler is run from repo root
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
     activities = [ProfilerActivity.CPU]
     if torch.cuda.is_available():

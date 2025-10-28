@@ -48,7 +48,7 @@ Author: Blackwell Performance Engineering Team
 import arch_config  # noqa: F401 - Configure Blackwell optimizations
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import deque
 import time
 import threading
@@ -850,13 +850,13 @@ class TensorParallelAttention(nn.Module):
                     attn_k[idx, :, :cache_len, :].copy_(cache_k)
                     attn_v[idx, :, :cache_len, :].copy_(cache_v)
                     write_pos = cache_len
+                    valid_mask[idx, :cache_len] = True
                 delta_len = token_lengths[idx]
                 if delta_len > 0:
-                    attn_k[idx, :, write_pos : write_pos + delta_len, :].copy_(key_local[idx, :, :delta_len, :])
-                    attn_v[idx, :, write_pos : write_pos + delta_len, :].copy_(value_local[idx, :, :delta_len, :])
-                    valid_mask[idx, : write_pos + delta_len] = True
-                else:
-                    valid_mask[idx, :write_pos] = True
+                    end_pos = write_pos + delta_len
+                    attn_k[idx, :, write_pos:end_pos, :].copy_(key_local[idx, :, :delta_len, :])
+                    attn_v[idx, :, write_pos:end_pos, :].copy_(value_local[idx, :, :delta_len, :])
+                    valid_mask[idx, write_pos:end_pos] = True
 
             attn_bias = None
             if not bool(valid_mask.all().item()):
@@ -901,6 +901,13 @@ class TensorParallelAttention(nn.Module):
 # Request Scheduler
 # ============================================================================
 
+@dataclass(order=True)
+class _QueuedRequest:
+    priority: int
+    arrival_index: int
+    request: InferenceRequest = field(compare=False)
+
+
 class ContinuousBatchScheduler:
     """
     Continuous batching scheduler for 8-GPU inference.
@@ -929,6 +936,7 @@ class ContinuousBatchScheduler:
         # Request queues
         self.waiting_requests = PriorityQueue()
         self.active_requests: Dict[str, RequestState] = {}
+        self._arrival_counter = 0
         
         # Statistics
         self.total_requests = 0
@@ -941,7 +949,13 @@ class ContinuousBatchScheduler:
     def add_request(self, request: InferenceRequest):
         """Add a new inference request."""
         with self.lock:
-            self.waiting_requests.put(request)
+            queued = _QueuedRequest(
+                priority=request.priority,
+                arrival_index=self._arrival_counter,
+                request=request,
+            )
+            self._arrival_counter += 1
+            self.waiting_requests.put(queued)
             self.total_requests += 1
     
     def get_next_batch(
@@ -962,42 +976,45 @@ class ContinuousBatchScheduler:
             
             # Add new requests if there's capacity, grouped by length bucket
             while len(batch) < self.max_batch_size and not self.waiting_requests.empty():
-                primary_request = self.waiting_requests.get()
+                primary_item: _QueuedRequest = self.waiting_requests.get()
+                primary_request = primary_item.request
                 bucket = self._length_bucket(len(primary_request.prompt_tokens))
-                bucket_requests = [primary_request]
-                spillover: List[InferenceRequest] = []
+                bucket_items: List[_QueuedRequest] = [primary_item]
+                spillover: List[_QueuedRequest] = []
 
                 while (
-                    len(batch) + len(bucket_requests) < self.max_batch_size
+                    len(batch) + len(bucket_items) < self.max_batch_size
                     and not self.waiting_requests.empty()
                 ):
-                    candidate = self.waiting_requests.get()
-                    if self._length_bucket(len(candidate.prompt_tokens)) == bucket:
-                        bucket_requests.append(candidate)
+                    candidate_item: _QueuedRequest = self.waiting_requests.get()
+                    candidate_request = candidate_item.request
+                    if self._length_bucket(len(candidate_request.prompt_tokens)) == bucket:
+                        bucket_items.append(candidate_item)
                     else:
-                        spillover.append(candidate)
+                        spillover.append(candidate_item)
 
                 for pending in spillover:
                     self.waiting_requests.put(pending)
 
                 allocation_failed = False
-                for idx, request in enumerate(bucket_requests):
+                for idx, item in enumerate(bucket_items):
+                    request = item.request
                     try:
                         slot = kv_cache_manager.allocate_slot()
                         if slot is None:
                             allocation_failed = True
                             self.rejected_requests += 1
                             # Requeue the current and remaining requests
-                            self.waiting_requests.put(request)
-                            for remaining in bucket_requests[idx + 1 :]:
+                            self.waiting_requests.put(item)
+                            for remaining in bucket_items[idx + 1 :]:
                                 self.waiting_requests.put(remaining)
                             break
                     except CacheExhaustedException:
                         # Cache exhausted - stop admitting new requests
                         allocation_failed = True
                         self.rejected_requests += 1
-                        self.waiting_requests.put(request)
-                        for remaining in bucket_requests[idx + 1 :]:
+                        self.waiting_requests.put(item)
+                        for remaining in bucket_items[idx + 1 :]:
                             self.waiting_requests.put(remaining)
                         break
 

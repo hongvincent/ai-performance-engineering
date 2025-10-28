@@ -163,12 +163,17 @@ class ArchitectureConfig:
         os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
         
         # PyTorch 2.9: Enable TF32 for Blackwell (improves FP32 matmul performance)
-        # Use ONLY the new API (PyTorch 2.9+) - do NOT mix with legacy API
-        if hasattr(torch.backends.cuda, "matmul") and hasattr(torch.backends.cuda.matmul, "fp32_precision"):
-            torch.backends.cuda.matmul.fp32_precision = "tf32"
-        
-        if hasattr(torch.backends.cudnn, "conv") and hasattr(torch.backends.cudnn.conv, "fp32_precision"):
-            torch.backends.cudnn.conv.fp32_precision = "tf32"
+        # Using old API for now because PyTorch Inductor still uses allow_tf32 internally
+        # Mixing old and new APIs causes RuntimeError
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = True
+        except (RuntimeError, AttributeError):
+            pass
+
+        try:
+            torch.backends.cudnn.allow_tf32 = True
+        except (RuntimeError, AttributeError):
+            pass
 
     def print_info(self) -> None:
         cfg = self.config

@@ -31,10 +31,13 @@ For REAL GPT-OSS models, see:
 - openai/gpt-oss-120b on HuggingFace (120B parameters)
 - openai/gpt-oss-20b on HuggingFace (20B parameters)
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import arch_config  # noqa: F401 - Configure Blackwell optimizations
 
 import json
-import os
 import time
 from dataclasses import dataclass, replace
 from typing import Optional
@@ -394,7 +397,7 @@ def main():
 
     if QUICK_MODE:
         # Use larger configuration in quick mode to highlight compile benefits
-        test_configs = [test_configs[3]]  # 24 layers, batch 32, seq 2048
+        test_configs = [test_configs[-1]]  # 48 layers, batch 8, seq 2048
     
     selected_config = None
     
@@ -445,7 +448,7 @@ def main():
     print("BENCHMARK 1: Eager Mode (BF16 baseline)")
     print("=" * 80)
     eager_warmup = 5 if QUICK_MODE else 10
-    eager_iters = 10 if QUICK_MODE else 50
+    eager_iters = 20 if QUICK_MODE else 50
     eager_time, eager_throughput = benchmark_inference(
         model,
         input_ids,
@@ -465,8 +468,8 @@ def main():
         dynamic=False
     )
     
-    compile_warmup = 5 if QUICK_MODE else 50
-    compile_iters = 5 if QUICK_MODE else 50
+    compile_warmup = 25 if QUICK_MODE else 50
+    compile_iters = 20 if QUICK_MODE else 50
     try:
         compiled_time, compiled_throughput = benchmark_inference(
             model_compiled,
@@ -497,8 +500,8 @@ def main():
         print("=" * 80)
         fp8_config = replace(config, use_fp8=True)
         fp8_model = SyntheticMoEModel(fp8_config, num_layers=selected_config['layers']).cuda().eval()
-        fp8_warmup = 3 if QUICK_MODE else eager_warmup
-        fp8_iters = 5 if QUICK_MODE else eager_iters
+        fp8_warmup = 8 if QUICK_MODE else eager_warmup
+        fp8_iters = 15 if QUICK_MODE else eager_iters
         fp8_eager_time, fp8_eager_throughput = benchmark_inference(
             fp8_model,
             input_ids,
@@ -516,8 +519,8 @@ def main():
             fullgraph=True,
             dynamic=False,
         )
-        fp8_compile_warmup = 3 if QUICK_MODE else compile_warmup
-        fp8_compile_iters = 5 if QUICK_MODE else compile_iters
+        fp8_compile_warmup = 20 if QUICK_MODE else compile_warmup
+        fp8_compile_iters = 15 if QUICK_MODE else compile_iters
         fp8_compiled_time, fp8_compiled_throughput = benchmark_inference(
             fp8_model_compiled,
             input_ids,
