@@ -1,8 +1,8 @@
 # AI Performance Engineering
 
-**Update:** Are you interested in a hands-on course for this material? 
+__**Update:** Are you interested in a hands-on course for this material?__
 
-If so, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSf4TMDLsPcfuoLhaDktXu-hhKIGntQm550BY-ov6bRT_VMJhQ/viewform?usp=sharing&ouid=111382272947765737941) to express interest and be notified.
+__If so, fill out this [**form**](https://docs.google.com/forms/d/e/1FAIpQLSf4TMDLsPcfuoLhaDktXu-hhKIGntQm550BY-ov6bRT_VMJhQ/viewform?usp=sharing&ouid=111382272947765737941) to express interest and be notified.__
 
 ## About This Repo
 
