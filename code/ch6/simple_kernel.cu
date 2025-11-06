@@ -26,20 +26,30 @@ int main() {
         h_input[i] = 1.0f;
     }
 
+    cudaStream_t stream;
+    cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+
     float* d_input = nullptr;
-    cudaMalloc(&d_input, N * sizeof(float));
-    cudaMemcpy(d_input, h_input, N * sizeof(float),
-               cudaMemcpyHostToDevice);
+    cudaMallocAsync(&d_input, N * sizeof(float), stream);
+    cudaMemcpyAsync(d_input, h_input, N * sizeof(float),
+                    cudaMemcpyHostToDevice, stream);
 
     const int threadsPerBlock = 256;
     const int blocksPerGrid =
         (N + threadsPerBlock - 1) / threadsPerBlock;
 
-    myKernel<<<blocksPerGrid, threadsPerBlock>>>(d_input, N);
-    cudaDeviceSynchronize();
+    myKernel<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, N);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Kernel launch failed: %s\n", cudaGetErrorString(err));
+        cudaStreamDestroy(stream);
+        cudaFreeHost(h_input);
+        return 1;
+    }
 
-    cudaMemcpy(h_input, d_input, N * sizeof(float),
-               cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(h_input, d_input, N * sizeof(float),
+                    cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
 
     // Verify result
     bool success = true;
@@ -57,8 +67,8 @@ int main() {
                blocksPerGrid, threadsPerBlock, blocksPerGrid * threadsPerBlock);
     }
 
-    cudaFree(d_input);
+    cudaFreeAsync(d_input, stream);
+    cudaStreamDestroy(stream);
     cudaFreeHost(h_input);
     return 0;
 }
-

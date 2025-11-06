@@ -129,7 +129,7 @@ def main() -> int:
         minor = cuda.attribute(device, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)
         print(f"Device {ordinal}: {name} (CC {major}.{minor})")
         if supports_dynamic_parallelism(major, minor):
-            print("  ✓ Dynamic parallelism supported (CC ≥ 3.5).")
+            print("  Dynamic parallelism supported (CC ≥ 3.5).")
         else:
             print("  ✗ Dynamic parallelism requires SM 3.5 or newer.")
             failures.append(ordinal)

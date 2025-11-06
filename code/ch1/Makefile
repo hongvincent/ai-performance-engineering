@@ -7,7 +7,8 @@ NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) --use_fast_math -lineinfo
 NVCC_LIBS = -lcublas -lcublasLt
 SUFFIX = $(TARGET_SUFFIX)
 
-TARGETS = batched_gemm_example$(SUFFIX) arithmetic_intensity_demo$(SUFFIX)
+BASE_TARGETS = baseline_gemm optimized_gemm_batched optimized_gemm_strided baseline_arithmetic_intensity optimized_arithmetic_intensity_combined
+TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
 .PHONY: all clean test compare blackwell grace-blackwell
 
@@ -15,10 +16,19 @@ all: $(TARGETS)
 	@echo "Building Chapter 1 examples with $(ARCH) (CUDA $(CUDA_VERSION))"
 	@echo "✓ Targeting $(ARCH_NAME)"
 
-batched_gemm_example$(SUFFIX): batched_gemm_example.cu
+baseline_gemm$(SUFFIX): baseline_gemm.cu
 	$(NVCC) $(NVCC_FLAGS) $(NVCC_LIBS) -o $@ $<
 
-arithmetic_intensity_demo$(SUFFIX): arithmetic_intensity_demo.cu
+optimized_gemm_batched$(SUFFIX): optimized_gemm_batched.cu
+	$(NVCC) $(NVCC_FLAGS) $(NVCC_LIBS) -o $@ $<
+
+optimized_gemm_strided$(SUFFIX): optimized_gemm_strided.cu
+	$(NVCC) $(NVCC_FLAGS) $(NVCC_LIBS) -o $@ $<
+
+baseline_arithmetic_intensity$(SUFFIX): baseline_arithmetic_intensity.cu
+	$(NVCC) $(NVCC_FLAGS) $(NVCC_LIBS) -o $@ $<
+
+optimized_arithmetic_intensity_combined$(SUFFIX): optimized_arithmetic_intensity_combined.cu
 	$(NVCC) $(NVCC_FLAGS) $(NVCC_LIBS) -o $@ $<
 
 test: all

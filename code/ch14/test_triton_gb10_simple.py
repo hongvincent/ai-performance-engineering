@@ -7,7 +7,6 @@ Test if Triton works on GB10 (SM 12.1) with simple kernels (no TMA)
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import arch_config  # noqa: F401 - Patches Triton to support SM 12.1
 
 import torch
 import triton
@@ -52,11 +51,11 @@ try:
     
     expected = x + y
     if torch.allclose(output, expected):
-        print("✅ Simple addition kernel WORKS!")
+        print("[OK] Simple addition kernel WORKS!")
     else:
-        print(f"❌ Mismatch: max diff = {(output - expected).abs().max().item()}")
+        print(f"ERROR: Mismatch: max diff = {(output - expected).abs().max().item()}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"ERROR: FAILED: {e}")
 
 print()
 
@@ -130,11 +129,11 @@ try:
     max_diff = (C - C_torch).abs().max().item()
     
     if max_diff < 0.1:  # FP16 has lower precision
-        print(f"✅ Matrix multiplication WORKS! (max diff: {max_diff:.6f})")
+        print(f"[OK] Matrix multiplication WORKS! (max diff: {max_diff:.6f})")
     else:
-        print(f"❌ Large mismatch: max diff = {max_diff}")
+        print(f"ERROR: Large mismatch: max diff = {max_diff}")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"ERROR: FAILED: {e}")
 
 print()
 print("=" * 80)

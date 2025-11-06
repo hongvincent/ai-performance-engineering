@@ -3,6 +3,17 @@ book/
 
 benchmark_results/
 .torch_inductor/
+tmp_bench/
+results_all/
+results_ch1/
+results_ch20/
+synthetic_moe_results.json
+tmp_bench_ch20/
+tmp_results/
+tmp_profiles/
+tmp_profile_*/
+tmp_bench_*/
+tmp_*/
 
 # Python
 __pycache__/
@@ -35,6 +46,9 @@ profiling_results_*/
 profiling_results_new/
 ch*/profiling_results/
 code/profiles/
+example_profiling/
+profile_runs/
+ch*/*_pytorch_profile/
 *.nsys-rep
 *.ncu-rep
 *.sqlite
@@ -45,6 +59,8 @@ hta_profile_*
 perf.data
 perf.data_*
 comprehensive_*
+*.pt.trace.json
+ch*/hta_traces/
 
 # Test and benchmark results
 benchmark_results/
@@ -59,6 +75,20 @@ validation_results/
 validation_results_*/
 quick_load_test_validation/
 
+# Root-level benchmark and performance result files
+all_results.json
+all_results_output.txt
+performance_results.json
+performance_summary.txt
+final_benchmark_results.txt
+final_benchmark_run.log
+BENCHMARK_PEAK_RESULTS_*.json
+single_gpu_load_test.json
+
+# Generated summary files
+*summary.md
+**/summary.md
+
 # Power and performance metrics
 power_results/
 power_metrics/
@@ -69,6 +99,8 @@ large_model_eager_8xb200*.json
 
 # PyTorch compile caches
 .torch_inductor/
+compiled_code_output/
+torch_compile_debug/
 
 # Build and run artifacts
 artifacts/*
@@ -77,9 +109,22 @@ artifacts/20*/
 ch*/*_build.log
 ch*/*_profile.log
 ch*/*_benchmark.log
+ch*/*_output.log
 *_build.log
 *_profile.log
 *_benchmark.log
+
+# Chapter-specific generated files
+ch*/*_trace.json
+ch*/*_snapshot.json
+ch*/synthetic_moe_results.json
+
+# Log files
+*.log
+cufile.log
+quick_retest.log
+benchmark_run.log
+final_benchmark.log
 
 # Generated plots and outputs (in chapter directories)
 ch*/roofline_plot.png
@@ -92,6 +137,16 @@ ch*/[A-Za-z0-9_-]*
 
 # NFS files
 .nfs*
+
+# Bootcamp game data (player-specific)
+bootcamp/data/game_state.json
+bootcamp/data/*.json
+!bootcamp/data/.gitkeep
+
+# Generated evaluation datasets (keep README, ignore data files)
+eval_datasets/*.txt
+eval_datasets/*.json
+!eval_datasets/README.md
 
 # Editor and IDE
 .vscode/

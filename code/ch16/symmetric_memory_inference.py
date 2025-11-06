@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Symmetric Memory Inference Patterns for 8x B200
-===============================================
+"""Symmetric Memory Inference Patterns for 8x B200.
 
 Extends the inference serving stack with PyTorch 2.9 symmetric memory
 primitives (backed by NVSHMEM on Blackwell) to achieve <5 µs cross-GPU
@@ -22,23 +20,23 @@ Usage:
 """
 
 from __future__ import annotations
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
-
 
 import argparse
 import datetime
 import os
 import random
 import string
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+try:
+    import torch.distributed._symmetric_memory as symm_mem
+except ImportError:
+    symm_mem = None  # type: ignore[assignment]
 
 import torch
 import torch.distributed as dist
@@ -50,7 +48,12 @@ import torch.distributed as dist
 
 
 def symmetric_memory_available() -> bool:
-    """Return True when torch.distributed.nn.SymmetricMemory is accessible."""
+    """Return True when symmetric memory APIs are accessible."""
+    if symm_mem is not None:
+        try:
+            return bool(symm_mem.is_nvshmem_available())
+        except Exception:
+            return True  # Best-effort fallback if NVSHMEM probe fails
     return hasattr(dist, "nn") and hasattr(dist.nn, "SymmetricMemory")
 
 

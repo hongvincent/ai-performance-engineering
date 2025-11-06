@@ -1,11 +1,17 @@
+#!/usr/bin/env python3
+
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure architecture optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 from arch_config import ArchitectureConfig
 import torch
@@ -31,7 +37,6 @@ def get_architecture_info():
         "tensor_cores": _ARCH_CFG.config.get("tensor_cores", "Unknown"),
         "features": _ARCH_CFG.config.get("features", []),
     }
-#!/usr/bin/env python3
 """
 Chapter 16: Profiling, Debugging, and Tuning Inference at Scale
 

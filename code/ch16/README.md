@@ -2,18 +2,18 @@
 
 ## Overview
 
-Production inference requires maximizing throughput while meeting latency SLAs. This chapter covers advanced inference optimizations including FP8 quantization, speculative decoding, continuous batching, and production serving frameworks like vLLM for 8x B200 systems.
+Production inference requires maximizing throughput while meeting latency SLAs. This chapter covers advanced inference optimizations including FP8 quantization, speculative decoding, continuous batching, and production serving frameworks like vLLM for 8x NVIDIA GPU systems.
 
 ## Learning Objectives
 
 After completing this chapter, you can:
 
-- ✅ Deploy production inference with vLLM on 8x B200
-- ✅ Apply FP8 quantization for 2x throughput improvement
-- ✅ Implement speculative decoding for faster generation
-- ✅ Optimize KV cache management and batching strategies
-- ✅ Monitor and debug production inference systems
-- ✅ Benchmark synthetic MoE and real workloads
+- [OK] Deploy production inference with vLLM on 8x NVIDIA GPU
+- [OK] Apply FP8 quantization for 2x throughput improvement
+- [OK] Implement speculative decoding for faster generation
+- [OK] Optimize KV cache management and batching strategies
+- [OK] Monitor and debug production inference systems
+- [OK] Benchmark synthetic MoE and real workloads
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ After completing this chapter, you can:
 
 ### 1. `inference_serving_8xb200.py` - Production Serving
 
-**Purpose**: Full-featured inference server for 8x B200 with tensor parallelism.
+**Purpose**: Full-featured inference server for 8x NVIDIA GPU with tensor parallelism.
 
 ```python
 import torch
@@ -78,7 +78,7 @@ for output in outputs:
     print(f"Generated: {generated}\n")
 ```
 
-**Performance targets (8x B200, 33B model)**:
+**Performance targets (8x NVIDIA GPU, 33B model)**:
 - **Throughput**: 15,000+ tokens/sec
 - **Latency (P50)**: <50ms per token
 - **Latency (P99)**: <100ms per token
@@ -161,8 +161,8 @@ print(f"Memory reduction: {memory_fp16 / memory_fp8:.2f}x")
 ```
 FP16: 8,500 tokens/sec, 42.1 GB
 FP8:  17,200 tokens/sec, 21.3 GB
-Speedup: 2.02x ✅
-Memory reduction: 1.98x ✅
+Speedup: 2.02x [OK]
+Memory reduction: 1.98x [OK]
 ```
 
 **How to run**:
@@ -546,7 +546,7 @@ kubectl apply -f ../docs/examples/inference_deployment.yaml
 ### Pitfall 1: Not Using Quantization
 **Problem**: Running FP16 when FP8 gives 2x improvement.
 
-**Solution**: Always use FP8 on B200 (Transformer Engine or vLLM quantization).
+**Solution**: Always use FP8 on NVIDIA GPU (Transformer Engine or vLLM quantization).
 
 ### Pitfall 2: Fixed Batch Sizes
 **Problem**: Waiting for full batch → High latency.
@@ -592,7 +592,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, vLLM 0.3, Transformer Engine 1.7, PyTorch 2.9
+**Chapter Status**: [OK] Complete
 

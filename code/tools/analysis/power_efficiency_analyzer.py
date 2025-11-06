@@ -181,13 +181,13 @@ def generate_efficiency_report(efficiency_data: Dict[str, Any]) -> str:
     if "tokens_per_joule" in efficiency_data:
         tpj = efficiency_data["tokens_per_joule"]
         if tpj > 1.0:
-            lines.append("✅ **Excellent** efficiency (>1 token/joule)")
+            lines.append("[OK] **Excellent** efficiency (>1 token/joule)")
         elif tpj > 0.5:
-            lines.append("✅ **Good** efficiency (0.5-1 token/joule)")
+            lines.append("[OK] **Good** efficiency (0.5-1 token/joule)")
         elif tpj > 0.1:
-            lines.append("⚠️ **Moderate** efficiency (0.1-0.5 token/joule)")
+            lines.append("WARNING: **Moderate** efficiency (0.1-0.5 token/joule)")
         else:
-            lines.append("❌ **Low** efficiency (<0.1 token/joule)")
+            lines.append("ERROR: **Low** efficiency (<0.1 token/joule)")
     
     lines.append("")
     lines.append("---")

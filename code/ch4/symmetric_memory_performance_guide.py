@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Symmetric Memory Performance Guide and Best Practices for 8x B200
 ================================================================
@@ -62,14 +72,9 @@ Performance Optimization Philosophy:
 """
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import argparse

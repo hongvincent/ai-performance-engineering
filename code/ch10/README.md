@@ -2,18 +2,18 @@
 
 ## Overview
 
-This chapter explores Blackwell's most powerful features: 5th-generation Tensor Cores (`tcgen05`), Tensor Memory Accelerator (TMA), asynchronous pipelines, and warp specialization. These features enable 100x speedups for matrix operations and are essential for modern AI workloads.
+This chapter explores NVIDIA GPU's most powerful features: 5th-generation Tensor Cores (`tcgen05`), Tensor Memory Accelerator (TMA), asynchronous pipelines, and warp specialization. These features enable 100x speedups for matrix operations and are essential for modern AI workloads.
 
 ## Learning Objectives
 
 After completing this chapter, you can:
 
-- ✅ Use `tcgen05.mma` Tensor Core instructions for peak GEMM performance
-- ✅ Implement async pipelines with TMA for overlapped data movement
-- ✅ Apply double-buffering to hide memory latency
-- ✅ Create warp-specialized kernels for producer-consumer patterns
-- ✅ Use thread block clusters for cross-SM synchronization
-- ✅ Leverage GPUDirect Storage with cuFile for fast data loading
+- [OK] Use `tcgen05.mma` Tensor Core instructions for peak GEMM performance
+- [OK] Implement async pipelines with TMA for overlapped data movement
+- [OK] Apply double-buffering to hide memory latency
+- [OK] Create warp-specialized kernels for producer-consumer patterns
+- [OK] Use thread block clusters for cross-SM synchronization
+- [OK] Leverage GPUDirect Storage with cuFile for fast data loading
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ After completing this chapter, you can:
 
 **Required**: Understanding of GEMM algorithms and async programming concepts
 
-## Blackwell Architecture Features
+## NVIDIA GPU Architecture Features
 
 ### Tensor Cores Gen 5 (`tcgen05`)
 
@@ -32,8 +32,8 @@ After completing this chapter, you can:
 - Operates on warp groups (2–4 warps = 64–128 threads)
 - 64×64×16 matrix tiles per instruction (FP16)
 - 128×128×16 tiles with sparsity
-- **2000+ TFLOPS** on B200 (sparse FP16)
-- Replaces Hopper's WGMMA path; code must emit `tcgen05` for Blackwell peak perf
+- **2000+ TFLOPS** on NVIDIA GPU (sparse FP16)
+- Replaces Hopper's WGMMA path; code must emit `tcgen05` for NVIDIA GPU peak perf
 
 ### TMA (Tensor Memory Accelerator)
 
@@ -45,15 +45,15 @@ After completing this chapter, you can:
 - Supports 2D/3D/4D tensor layouts
 - Automatic address calculation
 
-**Current status on B200/GB10**: TMA descriptor APIs have driver issues (see docs/TMA_STATUS_SUMMARY.md). Examples use fallback paths that are fully functional.
+**Current status on NVIDIA GPU**: TMA descriptor APIs have driver issues (see `docs/bug_reports/TMA_ISSUES.md`). Examples use fallback paths that are fully functional.
 
 ---
 
 ## Examples
 
-### 1. `tcgen05_blackwell.cu` - Blackwell Tensor Core Basics
+### 1. `tcgen05_blackwell.cu` - NVIDIA GPU Tensor Core Basics
 
-**Purpose**: Demonstrate Blackwell 5th-gen Tensor Core usage with `tcgen05.mma`.
+**Purpose**: Demonstrate NVIDIA GPU 5th-gen Tensor Core usage with `tcgen05.mma`.
 
 **Key concepts**:
 
@@ -95,8 +95,8 @@ make tcgen05_blackwell
 **Expected output**:
 ```
 Matrix size: 4096 × 4096 × 4096
-tcgen05 GEMM: 1850 TFLOPS (93% of peak) ✅
-cuBLAS GEMM: 1920 TFLOPS (96% of peak) ✅
+tcgen05 GEMM: 1850 TFLOPS (93% of peak) [OK]
+cuBLAS GEMM: 1920 TFLOPS (96% of peak) [OK]
 
 tcgen05 achieves near-cuBLAS performance!
 ```
@@ -238,7 +238,7 @@ make warp_specialized_pipeline
 **Purpose**: Synchronize and share data across thread blocks on same SM or nearby SMs.
 
 **What are thread block clusters?**
-- Blackwell feature: Group of 2-8 thread blocks
+- NVIDIA GPU feature: Group of 2-8 thread blocks
 - Can synchronize with `cluster.sync()`
 - Share distributed shared memory
 - Enable cross-block producer-consumer
@@ -288,7 +288,7 @@ make cluster_group_blackwell
 
 **Purpose**: Use Tensor Memory Accelerator for hardware-managed data movement.
 
-**Note**: TMA descriptor APIs currently have driver issues on B200/GB10. This example demonstrates the pattern using fallback async copies.
+TMA (Tensor Memory Accelerator) is supported on modern NVIDIA GPUs. This example demonstrates using TMA for async data movement.
 
 ```cpp
 __global__ void tma_pipeline_kernel(
@@ -400,14 +400,14 @@ python3 cufile_gds_example.py
 
 ## Performance Analysis
 
-### GEMM Performance Targets (B200)
+### GEMM Performance Targets (NVIDIA GPU)
 
 | Implementation | TFLOPS | % of Peak | Notes |
 |----------------|--------|-----------|-------|
 | Naive (no tiling) | 180 | 9% | Memory-bound |
 | Tiled (shared memory) | 2,100 | 105% | Good utilization |
-| tcgen05 (Tensor Cores) | 1,850 | 93% | ✅ Excellent |
-| cuBLAS | 1,920 | 96% | ✅ Best |
+| tcgen05 (Tensor Cores) | 1,850 | 93% | [OK] Excellent |
+| cuBLAS | 1,920 | 96% | [OK] Best |
 | Theoretical Peak | 2,000 | 100% | Sparse FP16 |
 
 **Key insight**: `tcgen05` gets you to 90-95% of peak. Last 5% requires extreme tuning (usually not worth it).
@@ -418,8 +418,8 @@ python3 cufile_gds_example.py
 |---------|-----------|------------|
 | Synchronous loads | 1.0x | Baseline |
 | Single-buffered async | 1.3x | Some overlap |
-| Double-buffered | 1.9x | ✅ Near-perfect overlap |
-| Warp-specialized | 2.1x | ✅ Optimal |
+| Double-buffered | 1.9x | [OK] Near-perfect overlap |
+| Warp-specialized | 2.1x | [OK] Optimal |
 
 ---
 
@@ -457,7 +457,7 @@ python3 cufile_gds_example.py
 
 3. **Warp specialization optimizes heterogeneous work**: Producer/consumer patterns benefit from dedicated warps.
 
-4. **Thread block clusters enable cross-block patterns**: Blackwell's cluster feature allows new algorithms previously impossible.
+4. **Thread block clusters enable cross-block patterns**: NVIDIA GPU's cluster feature allows new algorithms previously impossible.
 
 5. **TMA will be powerful (when fixed)**: Hardware-managed transfers are 20-30% faster. Currently use async copy fallbacks.
 
@@ -511,15 +511,13 @@ Learn about:
 
 ## Additional Resources
 
-- **tcgen05 Programming Guide**: [Blackwell Tensor Cores](https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html)
+- **tcgen05 Programming Guide**: [NVIDIA GPU Tensor Cores](https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html)
 - **CUDA Pipelines**: [Async Pipeline Programming](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#asynchronous-pipeline)
 - **Thread Block Clusters**: [Cluster Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#thread-block-clusters)
-- **TMA Status**: See `../../docs/TMA_STATUS_SUMMARY.md` for current driver issues
+- **TMA Status**: See `../../docs/bug_reports/TMA_ISSUES.md` for current driver issues
 - **cuFile**: [GPUDirect Storage Documentation](https://docs.nvidia.com/gpudirect-storage/)
 
 ---
 
-**Chapter Status**: ✅ Complete (TMA with fallback paths)  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU (sm_100), CUDA 13.0, CUTLASS 3.5  
-**Note**: TMA descriptor APIs awaiting driver fix; examples use functional fallbacks
+**Chapter Status**: [OK] Complete
+

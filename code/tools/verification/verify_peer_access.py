@@ -86,7 +86,7 @@ def main() -> int:
             bus_i = runtime.device_bus_id(i)
             bus_j = runtime.device_bus_id(j)
             if ok:
-                print(f"Device {i} (bus {bus_i}) → Device {j} (bus {bus_j}): ✓ peer access enabled")
+                print(f"Device {i} (bus {bus_i}) → Device {j} (bus {bus_j}): peer access enabled")
             else:
                 print(f"Device {i} (bus {bus_i}) → Device {j} (bus {bus_j}): ✗ peer access disabled")
                 failures.append((i, j))

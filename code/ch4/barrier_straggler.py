@@ -1,3 +1,12 @@
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """Demonstrate how monitored_barrier surfaces stragglers."""
 
 from __future__ import annotations
@@ -10,10 +19,6 @@ import torch
 import torch.distributed as dist
 
 try:
-    import arch_config  # noqa: F401
-except ImportError:
-    pass
-try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
     def setup_single_gpu_env():
@@ -24,6 +29,17 @@ except ImportError:
             os.environ.setdefault("MASTER_PORT", "29500")
             os.environ.setdefault("LOCAL_RANK", "0")
 
+try:
+    from gpu_requirements import require_min_gpus, warn_optimal_gpu_count
+except ImportError:
+    def require_min_gpus(min_gpus, script_name=None):
+        import torch, sys
+        if torch.cuda.device_count() < min_gpus:
+            print(f"ERROR: This script requires {min_gpus} GPUs but only {torch.cuda.device_count()} available", file=sys.stderr)
+            sys.exit(1)
+    def warn_optimal_gpu_count(optimal_gpus, script_name=None):
+        pass
+
 
 def init_distributed() -> tuple[int, int, torch.device]:
     if not torch.cuda.is_available():
@@ -31,7 +47,8 @@ def init_distributed() -> tuple[int, int, torch.device]:
 
     if not dist.is_initialized():
         setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    dist.init_process_group("nccl", init_method="env://")
+    # Use GLOO backend since monitored_barrier is only implemented for GLOO
+    dist.init_process_group("gloo", init_method="env://")
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -43,6 +60,9 @@ def init_distributed() -> tuple[int, int, torch.device]:
 
 
 def main() -> None:
+    # Check GPU requirements early - barrier testing needs multiple GPUs
+    require_min_gpus(2, "barrier_straggler.py")
+    
     rank, world_size, device = init_distributed()
 
     if rank == 1 and world_size > 1:

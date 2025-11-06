@@ -6,7 +6,6 @@ Test if PyTorch's torch.compile with Triton backend can use TMA on GB10
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import arch_config  # Patches Triton for SM 12.1
 
 import torch
 import torch._dynamo
@@ -51,14 +50,14 @@ try:
     # Check correctness
     expected = torch.matmul(x, y)
     if torch.allclose(result, expected, rtol=1e-3, atol=1e-3):
-        print("✅ torch.compile with Triton backend WORKS!")
+        print("[OK] torch.compile with Triton backend WORKS!")
         print(f"   Result shape: {result.shape}")
     else:
         max_diff = (result - expected).abs().max().item()
-        print(f"⚠️  Result mismatch: max diff = {max_diff}")
+        print(f"WARNING: Result mismatch: max diff = {max_diff}")
         
 except Exception as e:
-    print(f"❌ FAILED: {e}")
+    print(f"ERROR: FAILED: {e}")
     import traceback
     traceback.print_exc()
 

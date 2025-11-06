@@ -177,7 +177,7 @@ if __name__ == "__main__":
     profile_workload()
 WORKLOAD_EOF
 
-echo -e "${GREEN}✓ Workload script created${NC}"
+echo -e "${GREEN}Workload script created${NC}"
 echo ""
 
 # Run profiling
@@ -197,7 +197,7 @@ PROFILE_SUCCESS=$?
 echo ""
 
 if [ ${PROFILE_SUCCESS} -eq 0 ]; then
-    echo -e "${GREEN}✓ Profiling complete${NC}"
+    echo -e "${GREEN}Profiling complete${NC}"
 else
     echo -e "${YELLOW}⚠ Profiling completed with warnings${NC}"
 fi
@@ -230,7 +230,7 @@ if [ -f "${PROFILE_FILE}" ]; then
     echo "  - Generating memory stats..."
     nsys stats --report gpumemtimesum "${PROFILE_FILE}" > "${OUTPUT_DIR}/gpu_memory_summary.txt" 2>&1 || true
     
-    echo -e "${GREEN}✓ Reports generated${NC}"
+    echo -e "${GREEN}Reports generated${NC}"
 else
     echo -e "${YELLOW}⚠ Profile file not found, skipping report generation${NC}"
 fi
@@ -347,7 +347,7 @@ echo "  cat ${OUTPUT_DIR}/gpu_kernel_summary.txt"
 echo ""
 
 if [ ${PROFILE_SUCCESS} -eq 0 ]; then
-    echo -e "${GREEN}✅ Profiling completed successfully!${NC}"
+    echo -e "${GREEN}[OK] Profiling completed successfully!${NC}"
     exit 0
 else
     echo -e "${YELLOW}⚠ Profiling completed with warnings${NC}"

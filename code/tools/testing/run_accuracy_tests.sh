@@ -49,7 +49,7 @@ for dataset in "$RESULTS_DIR/eval_datasets"/*.txt; do
             --stride 128 \
             --output "$RESULTS_DIR/comparison_${dataset_name}.md" \
             --output-json "$RESULTS_DIR/comparison_${dataset_name}.json" 2>&1 | tee "$RESULTS_DIR/log_${dataset_name}.txt"; then
-            echo -e "    ${GREEN}✓ Complete${NC}"
+            echo -e "    ${GREEN}Complete${NC}"
         else
             echo -e "    ${YELLOW}⚠ Completed with warnings${NC}"
         fi
@@ -146,7 +146,7 @@ Based on the accuracy tests:
 
 EOF
 
-echo -e "${GREEN}✓ Summary report created: $SUMMARY_FILE${NC}"
+echo -e "${GREEN}Summary report created: $SUMMARY_FILE${NC}"
 echo ""
 
 # Display summary

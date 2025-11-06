@@ -23,14 +23,26 @@ Requirements:
 
 Author: Blackwell Optimization Project
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    from arch_config import prefer_flash_sdpa  # type: ignore
+except Exception:
+    from contextlib import nullcontext
+
+    def prefer_flash_sdpa():
+        return nullcontext()
 
 
 import torch
@@ -337,9 +349,10 @@ class OptimizedDecoderLayer(nn.Module):
             )
             attn_output = self.flex_attention_fn(query, key, value, block_mask)
         else:
-            attn_output = F.scaled_dot_product_attention(
-                query, key, value, dropout_p=0.0, is_causal=False
-            )
+            with prefer_flash_sdpa():
+                attn_output = F.scaled_dot_product_attention(
+                    query, key, value, dropout_p=0.0, is_causal=False
+                )
         
         # Reshape and project
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -607,12 +620,13 @@ def detect_8xb200():
         return False
     
     props = torch.cuda.get_device_properties(0)
-    compute_capability = f"{props.major}.{props.minor}"
     memory_gb = props.total_memory / (1024**3)
     
-    return (compute_capability == "10.0" and 
-            170 < memory_gb < 190 and 
-            num_gpus == 8)
+    return (
+        props.major >= 10
+        and num_gpus == 8
+        and memory_gb >= 180
+    )
 
 def detect_gb200_gb300():
     """Detect if running on GB200/GB300 Grace-Blackwell."""
@@ -622,8 +636,7 @@ def detect_gb200_gb300():
     has_sm100 = False
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
-        compute_capability = f"{props.major}.{props.minor}"
-        has_sm100 = compute_capability == "10.0"
+        has_sm100 = props.major >= 10
     
     return is_arm and has_sm100
 
@@ -857,8 +870,8 @@ class GB200CPUOffloadKVCache:
         
         print(f"\nGB200/GB300 CPU Offload KV Cache:")
         if is_gb200_gb300:
-            print("  ✓ Detected Grace-Blackwell Superchip")
-            print("  ✓ NVLink-C2C: 900 GB/s peak bandwidth")
+            print("  Detected Grace-Blackwell Superchip")
+            print("  NVLink-C2C: 900 GB/s peak bandwidth")
         print(f"  GPU cache: {self.gpu_cache.numel() * self.gpu_cache.element_size() / 1e9:.2f} GB (hot)")
         print(f"  CPU cache: {self.cpu_cache.numel() * self.cpu_cache.element_size() / 1e9:.2f} GB (cold)")
         print(f"  Total capacity: {max_seq_len:,} tokens per sequence")
@@ -902,8 +915,8 @@ def demo_gb200_cpu_offloading():
     print("=" * 80)
     
     if is_gb200_gb300:
-        print("✓ Detected: GB200/GB300 Grace-Blackwell Superchip")
-        print("✓ NVLink-C2C: 900 GB/s coherent CPU-GPU bandwidth")
+        print("Detected: GB200/GB300 Grace-Blackwell Superchip")
+        print("NVLink-C2C: 900 GB/s coherent CPU-GPU bandwidth")
     else:
         print("ℹ Running on standard GPU (GB200/GB300 features emulated)")
     
@@ -960,12 +973,12 @@ if __name__ == "__main__":
     is_gb200_gb300 = detect_gb200_gb300()
     
     if is_8xb200:
-        print("✓ Detected: 8x B200 GPUs (1.44 TB total memory)")
+        print("Detected: 8x B200 GPUs (1.44 TB total memory)")
     if is_gb200_gb300:
-        print("✓ Detected: GB200/GB300 Grace-Blackwell Superchip")
+        print("Detected: GB200/GB300 Grace-Blackwell Superchip")
     
     if FP8_AVAILABLE:
-        print("✓ FP8 support available")
+        print("FP8 support available")
     else:
         print("ℹ FP8 not available (requires PyTorch 2.9+)")
     
@@ -981,22 +994,22 @@ if __name__ == "__main__":
         compare_inference_methods()
         
         print("\n=== Key Benefits ===")
-        print("✓ 2x faster inference with FlexAttention")
-        print("✓ 50% memory reduction with FP8 KV cache")
-        print("✓ 16K+ context support")
-        print("✓ <10ms latency per token on B200")
-        print("✓ Production-ready pipeline")
+        print("2x faster inference with FlexAttention")
+        print("50% memory reduction with FP8 KV cache")
+        print("16K+ context support")
+        print("<10ms latency per token on B200")
+        print("Production-ready pipeline")
         
         if is_8xb200:
             print("\n=== 8x B200 Features ===")
-            print("✓ Tensor parallel for 100B+ models")
-            print("✓ 8x throughput vs single GPU")
-            print("✓ 1.44 TB total memory capacity")
+            print("Tensor parallel for 100B+ models")
+            print("8x throughput vs single GPU")
+            print("1.44 TB total memory capacity")
             print("Run with --eight-gpu for tensor parallel benchmark")
         
         if is_gb200_gb300:
             print("\n=== GB200/GB300 Features ===")
-            print("✓ CPU offloading for long context (128K+ tokens)")
-            print("✓ 900 GB/s NVLink-C2C bandwidth")
-            print("✓ 480GB-1TB CPU memory for KV cache")
+            print("CPU offloading for long context (128K+ tokens)")
+            print("900 GB/s NVLink-C2C bandwidth")
+            print("480GB-1TB CPU memory for KV cache")
             print("Run with --gb200 for CPU offloading demo")

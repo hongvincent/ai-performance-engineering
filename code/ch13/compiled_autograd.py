@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Compiled Autograd with PyTorch 2.9
 
@@ -7,14 +17,9 @@ Requires PyTorch 2.9+ and CUDA 13.0+.
 """
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import torch
@@ -24,6 +29,7 @@ from torch._dynamo import compiled_autograd
 import time
 from typing import Optional
 from contextlib import nullcontext
+from common.device_utils import get_preferred_device
 
 # Check if compiled autograd is available
 try:
@@ -54,10 +60,13 @@ class BenchmarkModel(nn.Module):
 
 def benchmark_standard_autograd() -> float:
     """Benchmark standard autograd (baseline)."""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+    device_obj, cuda_err = get_preferred_device()
+    device = device_obj.type
+    if cuda_err:
+        print(f"WARNING: CUDA unavailable ({cuda_err}); using CPU for baseline autograd benchmark.")
+
     model = BenchmarkModel().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=(device == "cuda"))
     
     batch_size = 32
     seq_len = 256
@@ -107,11 +116,14 @@ def benchmark_compiled_autograd() -> float:
     """Benchmark with compiled autograd."""
     if not COMPILED_AUTOGRAD_AVAILABLE:
         return 0.0
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
+    device_obj, cuda_err = get_preferred_device()
+    device = device_obj.type
+    if cuda_err:
+        print(f"WARNING: CUDA unavailable ({cuda_err}); using CPU for compiled autograd benchmark.")
+
     model = BenchmarkModel().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=(device == "cuda"))
     
     batch_size = 32
     seq_len = 256
@@ -134,7 +146,7 @@ def benchmark_compiled_autograd() -> float:
         
         if device == "cuda":
             torch.cuda.synchronize()
-        
+
         # Benchmark
         if device == "cuda":
             start = torch.cuda.Event(enable_timing=True)
@@ -169,15 +181,18 @@ def benchmark_forward_and_backward_compiled() -> tuple[float, float]:
     """Benchmark with both forward and backward compiled."""
     if not COMPILED_AUTOGRAD_AVAILABLE:
         return 0.0, 0.0
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
+    device_obj, cuda_err = get_preferred_device()
+    device = device_obj.type
+    if cuda_err:
+        print(f"WARNING: CUDA unavailable ({cuda_err}); using CPU for forward+backward compiled benchmark.")
+
     model = BenchmarkModel().to(device)
-    
-    # Compile forward pass
-    compiled_model = torch.compile(model, mode="max-autotune")
-    
-    optimizer = torch.optim.AdamW(compiled_model.parameters(), lr=1e-4, fused=True)
+
+    # Compile forward pass when CUDA is available; CPU uses eager mode.
+    compiled_model = torch.compile(model, mode="max-autotune") if device == "cuda" else model
+
+    optimizer = torch.optim.AdamW(compiled_model.parameters(), lr=1e-4, fused=(device == "cuda"))
     
     batch_size = 32
     seq_len = 256
@@ -200,7 +215,7 @@ def benchmark_forward_and_backward_compiled() -> tuple[float, float]:
         
         if device == "cuda":
             torch.cuda.synchronize()
-        
+
         # Benchmark
         if device == "cuda":
             start = torch.cuda.Event(enable_timing=True)

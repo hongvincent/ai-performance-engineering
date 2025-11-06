@@ -4,17 +4,41 @@ These snippets intentionally highlight how to keep GPU control flow uniform by
 preferring vectorized tensor ops over Python loops, masking work, and (optionally)
 fusing conditionals with torch.compile.
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 from __future__ import annotations
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+CHAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(CHAPTER_DIR)
+if CHAPTER_DIR not in sys.path:
+    sys.path.insert(0, CHAPTER_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(1, REPO_ROOT)
 
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
+    from arch_config import (
+        get_compile_mode,
+        maybe_compile,
+        should_use_compile,
+    )
 except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    def maybe_compile(fn, *, default_mode: str = "reduce-overhead"):
+        return fn
 
+    def should_use_compile() -> bool:
+        return False
+
+    def get_compile_mode(default: str = "reduce-overhead") -> str:
+        return default
 
 import time
 import torch
@@ -190,14 +214,28 @@ def compiled_conditionals() -> None:
         out = torch.where(mask_lo, y * 0.5, out)
         return torch.where(~(mask_hi | mask_lo), x + y, out)
 
-    # Leave fullgraph disabled; enable it only for shape-static workloads that benefit from CUDA Graph capture.
-    compiled = torch.compile(uncompiled, mode="reduce-overhead")
+    compile_mode = get_compile_mode("reduce-overhead")
+    if not should_use_compile():
+        print(
+            "torch.compile disabled (set USE_COMPILE=1) — measuring uncompiled path only."
+        )
+        _benchmark("Uncompiled", lambda: uncompiled(x, y, threshold))
+        return
+
+    compiled = maybe_compile(uncompiled, default_mode=compile_mode)
+    if compiled is uncompiled:
+        print(
+            f"torch.compile request failed or was disabled; "
+            f"use USE_COMPILE=1 COMPILE_MODE={compile_mode} for the fused comparison."
+        )
+        _benchmark("Uncompiled", lambda: uncompiled(x, y, threshold))
+        return
 
     # Warm-up to trigger compilation
     compiled(x, y, threshold)
 
     _benchmark("Uncompiled", lambda: uncompiled(x, y, threshold))
-    _benchmark("Compiled", lambda: compiled(x, y, threshold))
+    _benchmark(f"Compiled ({compile_mode})", lambda: compiled(x, y, threshold))
 
     max_diff = torch.max(torch.abs(uncompiled(x, y, threshold) - compiled(x, y, threshold))).item()
     print(f"Max difference post-compile: {max_diff:.2e}")

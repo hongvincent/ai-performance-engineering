@@ -20,7 +20,7 @@ Performance Optimizations:
 - Sequence bucketing: 5-10% efficiency improvement
 
 Performance Targets (8x B200):
-- Throughput: >8M tokens/second aggregate
+- Throughput: ~0.5M tokens/second aggregate (directional target; tune per model)
 - Latency: <10ms per token (first token)
 - Batch size: 128-512 concurrent requests
 - Context: up to 16K tokens per request
@@ -29,7 +29,7 @@ Performance Targets (8x B200):
 Hardware:
 - 8x B200 GPUs (1.44 TB total memory)
 
-- NVLink 5.0 (1800 GB/s per pair)
+- NVLink 5 (~1.8 TB/s per GPU, bidirectional)
 - NCCL 2.28 + NVLS for optimal collectives
 
 Requirements:
@@ -45,14 +45,26 @@ Error Recovery:
 
 Author: Blackwell Performance Engineering Team
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    from arch_config import prefer_flash_sdpa  # type: ignore
+except Exception:
+    from contextlib import nullcontext
+
+    def prefer_flash_sdpa():
+        return nullcontext()
 
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -294,12 +306,13 @@ def detect_8xb200():
         return False
     
     props = torch.cuda.get_device_properties(0)
-    compute_capability = f"{props.major}.{props.minor}"
     memory_gb = props.total_memory / (1024**3)
-    
-    return (compute_capability == "10.0" and 
-            170 < memory_gb < 190 and 
-            num_gpus == 8)
+
+    return (
+        props.major >= 10
+        and num_gpus == 8
+        and memory_gb >= 180
+    )
 
 def detect_gb200_gb300():
     """Detect if running on GB200/GB300 Grace-Blackwell."""
@@ -309,8 +322,7 @@ def detect_gb200_gb300():
     has_sm100 = False
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
-        compute_capability = f"{props.major}.{props.minor}"
-        has_sm100 = compute_capability == "10.0"
+        has_sm100 = props.major >= 10
     
     return is_arm and has_sm100
 
@@ -444,7 +456,7 @@ class ShardedKVCacheManager:
             print(f"  Max sequence length: {max_seq_len:,} tokens")
             print(f"  Max resident pages: {self.total_pages_limit:,}")
             if self.enable_symmetric_memory:
-                print("  ✓ Symmetric memory registration enabled for page sharing")
+                print("  Symmetric memory registration enabled for page sharing")
     
     def allocate_slot(self) -> Optional[int]:
         """Allocate a cache slot for a new request."""
@@ -818,13 +830,14 @@ class TensorParallelAttention(nn.Module):
             if self._force_sdpa or not _flex_attention_supported(
                 q, key_local, value_local, head_dim=self.head_dim
             ):
-                out = F.scaled_dot_product_attention(
-                    q,
-                    key_local,
-                    value_local,
-                    dropout_p=0.0,
-                    is_causal=True,
-                )
+                with prefer_flash_sdpa():
+                    out = F.scaled_dot_product_attention(
+                        q,
+                        key_local,
+                        value_local,
+                        dropout_p=0.0,
+                        is_causal=True,
+                    )
             else:
                 out = _call_flex_attention_scaled(q, key_local, value_local, scale)
         else:
@@ -883,14 +896,15 @@ class TensorParallelAttention(nn.Module):
                 attn_bias=attn_bias,
                 head_dim=self.head_dim,
             ):
-                out = F.scaled_dot_product_attention(
-                    q,
-                    attn_k,
-                    attn_v,
-                    dropout_p=0.0,
-                    attn_mask=attn_bias,
-                    is_causal=True,
-                )
+                with prefer_flash_sdpa():
+                    out = F.scaled_dot_product_attention(
+                        q,
+                        attn_k,
+                        attn_v,
+                        dropout_p=0.0,
+                        attn_mask=attn_bias,
+                        is_causal=True,
+                    )
             else:
                 out = _call_flex_attention_scaled(q, attn_k, attn_v, scale)
         
@@ -1322,7 +1336,7 @@ class InferenceServer8GPU:
 
             if self.rank == 0:
                 print(
-                    f"✓ CUDA Graph captured for static prefill: batch={self.max_batch_size}, seq_len={graph_seq_len}"
+                    f"CUDA Graph captured for static prefill: batch={self.max_batch_size}, seq_len={graph_seq_len}"
                 )
         except RuntimeError as exc:
             if self.rank == 0:
@@ -1646,9 +1660,9 @@ def demo_continuous_batching():
     is_gb200_gb300 = detect_gb200_gb300()
     
     if is_8xb200:
-        print("✓ Detected: 8x B200 GPUs (1.44 TB total memory)")
+        print("Detected: 8x B200 GPUs (1.44 TB total memory)")
     if is_gb200_gb300:
-        print("✓ Detected: GB200/GB300 Grace-Blackwell Superchip")
+        print("Detected: GB200/GB300 Grace-Blackwell Superchip")
     
     if not is_8xb200:
         print("⚠ This demo is optimized for 8x B200 GPUs")
@@ -1708,11 +1722,11 @@ def demo_continuous_batching():
         print("  Scaling: 85-95% efficiency vs single GPU")
         
         print("\n=== Key Features ===")
-        print("  ✓ Continuous batching (add/remove on the fly)")
-        print("  ✓ Tensor parallel attention (8-way split)")
-        print("  ✓ Sharded KV cache across GPUs")
-        print("  ✓ Priority-based scheduling")
-        print("  ✓ Dynamic batch size adaptation")
+        print("  Continuous batching (add/remove on the fly)")
+        print("  Tensor parallel attention (8-way split)")
+        print("  Sharded KV cache across GPUs")
+        print("  Priority-based scheduling")
+        print("  Dynamic batch size adaptation")
         
         print("\n=== Monitoring ===")
         print("  nvidia-smi dmon -s u -i 0,1,2,3,4,5,6,7")
@@ -1768,13 +1782,13 @@ Expected Performance (8x B200):
   - 16K+ context support
 
 Key Optimizations:
-  ✓ Tensor parallel attention (NVLink 5.0)
-  ✓ Continuous batching (no idle time)
-  ✓ Sharded KV cache (1.44 TB total)
-  ✓ torch.compile (20-30% speedup)
-  ✓ NCCL 2.28 with NVLS
-  ✓ Priority scheduling
-  ✓ Dynamic batch adaptation
+  Tensor parallel attention (NVLink 5.0)
+  Continuous batching (no idle time)
+  Sharded KV cache (1.44 TB total)
+  torch.compile (20-30% speedup)
+  NCCL 2.28 with NVLS
+  Priority scheduling
+  Dynamic batch adaptation
 
 Integration with Production Systems:
   - Add FastAPI wrapper for HTTP serving

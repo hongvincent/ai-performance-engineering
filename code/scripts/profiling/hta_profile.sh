@@ -21,6 +21,9 @@ fi
 
 echo "HTA profiling for $SCRIPT_NAME (Architecture: $ARCH)"
 
+# Enable Python fault handler for stack traces on crashes
+export PYTHONFAULTHANDLER=${PYTHONFAULTHANDLER:-1}
+
 nsys profile \
     --force-overwrite=true \
     -o "hta_profile_${ARCH}_$(date +%Y%m%d_%H%M%S)" \

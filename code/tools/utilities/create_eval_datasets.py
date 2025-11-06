@@ -193,10 +193,9 @@ python tools/compare_precision_accuracy.py --dataset eval_datasets/structured_to
 """
     readme_path.write_text(readme_content)
     print(f"\nCreated README: {readme_path}")
-    print(f"\n✅ All datasets created in {output_dir}/")
+    print(f"\n[OK] All datasets created in {output_dir}/")
 
 
 if __name__ == "__main__":
     main()
-
 

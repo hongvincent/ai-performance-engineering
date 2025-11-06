@@ -1,11 +1,15 @@
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure architecture optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 from arch_config import ArchitectureConfig
 import torch.profiler as profiler
@@ -16,6 +20,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import os
 import functools
+from common.device_utils import cuda_supported
 
 try:
     from torch.distributed.fsdp import (
@@ -305,9 +310,9 @@ def create_fsdp_model_8xb200(tp_size=2, model_size="7B"):
         print("8x B200 Hybrid Parallel FSDP Configuration")
         print("=" * 80)
         if is_8xb200:
-            print("✓ Detected: 8x B200 GPUs (1.44 TB total memory)")
+            print("Detected: 8x B200 GPUs (1.44 TB total memory)")
         if is_gb200_gb300:
-            print("✓ Detected: GB200/GB300 Grace-Blackwell Superchip")
+            print("Detected: GB200/GB300 Grace-Blackwell Superchip")
         print(f"Model size: {model_size}")
         print(f"Tensor Parallel (TP) size: {tp_size}")
         print(f"Data Parallel (DP) size: {dp_size}")
@@ -365,7 +370,7 @@ def create_fsdp_model_8xb200(tp_size=2, model_size="7B"):
     if is_gb200_gb300 and model_size in ["50B", "100B+"]:
         fsdp_kwargs["cpu_offload"] = CPUOffload(offload_params=False, pin_memory=True)
         if rank == 0:
-            print("✓ CPU offloading enabled for large model on GB200/GB300")
+            print("CPU offloading enabled for large model on GB200/GB300")
     
     # Create FSDP model
     fsdp_model = FSDP(model, **fsdp_kwargs)
@@ -424,6 +429,10 @@ def main():
     if not FSDP_AVAILABLE:
         print("FSDP modules not available; skipping FSDP training demo")
         return
+
+    if not cuda_supported():
+        print("CUDA unavailable or unsupported for this build; skipping FSDP demo.")
+        return
     
     try:
         # Check if running on 8x B200
@@ -470,7 +479,7 @@ def main():
                     print(f"  Memory reserved: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
         
         if rank == 0:
-            print("\n✓ Training completed successfully!")
+            print("\nTraining completed successfully!")
             
     except Exception as e:
         print(f"Error in training: {e}")
@@ -499,15 +508,15 @@ def demo_8xb200_configurations():
         print("\nRecommended configurations based on model size:")
         print("\n1. Small models (7-20B parameters):")
         print("   TP=2, DP=4 - Balanced approach (RECOMMENDED)")
-        print("   torchrun --nproc_per_node=8 ch13/fsdp_example.py --tp-size 2 --model-size 7B")
+        print("   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --tp-size 2 --model-size 7B")
         
         print("\n2. Medium models (20-50B parameters):")
         print("   TP=4, DP=2 - More model parallelism")
-        print("   torchrun --nproc_per_node=8 ch13/fsdp_example.py --tp-size 4 --model-size 20B")
+        print("   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --tp-size 4 --model-size 20B")
         
         print("\n3. Large models (50-100B parameters):")
         print("   TP=8, DP=1 - Maximum model parallelism")
-        print("   torchrun --nproc_per_node=8 ch13/fsdp_example.py --tp-size 8 --model-size 50B")
+        print("   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --tp-size 8 --model-size 50B")
         
         print("\n4. Very large models (100B+ parameters):")
         print("   TP=8, DP=N (multi-node required)")
@@ -595,30 +604,30 @@ if __name__ == "__main__":
 8x B200 Usage Examples:
 
 1. Basic 8-GPU training (auto-detects configuration):
-   torchrun --nproc_per_node=8 ch13/fsdp_example.py
+   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py
 
 2. TP=2, DP=4 configuration (7-20B models):
-   torchrun --nproc_per_node=8 ch13/fsdp_example.py --model-size 7B
+   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --model-size 7B
 
 3. TP=4, DP=2 configuration (20-50B models):
-   torchrun --nproc_per_node=8 ch13/fsdp_example.py --model-size 20B
+   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --model-size 20B
 
 4. Show configuration guide:
-   torchrun --nproc_per_node=8 ch13/fsdp_example.py --show-configs
+   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --show-configs
 
 5. Multi-node with 8 GPUs per node:
    # Node 0:
    torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 \
        --master_addr=node0 --master_port=12355 \
-       ch13/fsdp_example.py --model-size 7B
+       extras/ch13/fsdp_example.py --model-size 7B
    
    # Node 1:
    torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 \
        --master_addr=node0 --master_port=12355 \
-       ch13/fsdp_example.py --model-size 7B
+       extras/ch13/fsdp_example.py --model-size 7B
 
 6. GB200/GB300 with CPU offloading (large models):
-   torchrun --nproc_per_node=8 ch13/fsdp_example.py --model-size 50B
+   torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py --model-size 50B
 
 Expected Performance (8x B200):
   - 7B model:  85-95% scaling efficiency, >2M tokens/sec
@@ -632,12 +641,12 @@ Memory Usage (per GPU, 180 GB total):
   - Activation checkpointing can reduce memory by 30-50%
 
 Key Features:
-  ✓ PyTorch 2.9 forward_prefetch for better overlap
-  ✓ HYBRID_SHARD strategy for optimal 8-GPU performance
-  ✓ BFloat16 mixed precision for Blackwell
-  ✓ Automatic 8x B200 and GB200/GB300 detection
-  ✓ CPU offloading support for GB200/GB300
-  ✓ Detailed memory profiling
+  PyTorch 2.9 forward_prefetch for better overlap
+  HYBRID_SHARD strategy for optimal 8-GPU performance
+  BFloat16 mixed precision for Blackwell
+  Automatic 8x B200 and GB200/GB300 detection
+  CPU offloading support for GB200/GB300
+  Detailed memory profiling
 
 Monitoring Commands:
   # Watch NVLink bandwidth
@@ -647,7 +656,7 @@ Monitoring Commands:
   nvidia-smi dmon -s m,u -i 0,1,2,3,4,5,6,7
   
   # NCCL debug info
-  NCCL_DEBUG=INFO torchrun --nproc_per_node=8 ch13/fsdp_example.py
+  NCCL_DEBUG=INFO torchrun --nproc_per_node=8 extras/ch13/fsdp_example.py
 """
 
 # Architecture-specific optimizations

@@ -20,11 +20,11 @@ def check_pytorch_import():
     
     try:
         import torch
-        print(f"✅ PyTorch imported successfully")
+        print(f"[OK] PyTorch imported successfully")
         print(f"   Version: {torch.__version__}")
         return True, torch
     except ImportError as e:
-        print(f"❌ Failed to import PyTorch: {e}")
+        print(f"ERROR: Failed to import PyTorch: {e}")
         return False, None
 
 
@@ -33,7 +33,7 @@ def check_cuda_availability(torch):
     print_section("CUDA Availability Check")
     
     if torch.cuda.is_available():
-        print("✅ CUDA is available")
+        print("[OK] CUDA is available")
         print(f"   CUDA Version: {torch.version.cuda}")
         print(f"   cuDNN Version: {torch.backends.cudnn.version()}")
         print(f"   Number of GPUs: {torch.cuda.device_count()}")
@@ -46,7 +46,7 @@ def check_cuda_availability(torch):
         
         return True
     else:
-        print("❌ CUDA is not available")
+        print("ERROR: CUDA is not available")
         print("   PyTorch may not be built with CUDA support")
         return False
 
@@ -60,22 +60,22 @@ def test_basic_operations(torch):
         x = torch.randn(100, 100)
         y = torch.randn(100, 100)
         z = torch.matmul(x, y)
-        print("✅ CPU operations working")
+        print("[OK] CPU operations working")
         
         # GPU test
         if torch.cuda.is_available():
             x_gpu = x.cuda()
             y_gpu = y.cuda()
             z_gpu = torch.matmul(x_gpu, y_gpu)
-            print("✅ GPU operations working")
+            print("[OK] GPU operations working")
             
             # Test synchronization
             torch.cuda.synchronize()
-            print("✅ CUDA synchronization working")
+            print("[OK] CUDA synchronization working")
         
         return True
     except Exception as e:
-        print(f"❌ Operations test failed: {e}")
+        print(f"ERROR: Operations test failed: {e}")
         return False
 
 
@@ -84,7 +84,7 @@ def test_mixed_precision(torch):
     print_section("Mixed Precision Support")
     
     if not torch.cuda.is_available():
-        print("⚠️  CUDA not available, skipping mixed precision test")
+        print("WARNING: CUDA not available, skipping mixed precision test")
         return True
     
     try:
@@ -92,16 +92,16 @@ def test_mixed_precision(torch):
         x = torch.randn(100, 100, device='cuda', dtype=torch.float16)
         y = torch.randn(100, 100, device='cuda', dtype=torch.float16)
         z = torch.matmul(x, y)
-        print("✅ FP16 operations working")
+        print("[OK] FP16 operations working")
         
         # Test BF16
         if torch.cuda.is_bf16_supported():
             x = torch.randn(100, 100, device='cuda', dtype=torch.bfloat16)
             y = torch.randn(100, 100, device='cuda', dtype=torch.bfloat16)
             z = torch.matmul(x, y)
-            print("✅ BF16 operations working")
+            print("[OK] BF16 operations working")
         else:
-            print("⚠️  BF16 not supported on this GPU")
+            print("WARNING: BF16 not supported on this GPU")
         
         # Test AMP
         from torch.cuda.amp import autocast
@@ -109,11 +109,11 @@ def test_mixed_precision(torch):
             x = torch.randn(100, 100, device='cuda')
             y = torch.randn(100, 100, device='cuda')
             z = torch.matmul(x, y)
-        print("✅ Automatic Mixed Precision (AMP) working")
+        print("[OK] Automatic Mixed Precision (AMP) working")
         
         return True
     except Exception as e:
-        print(f"❌ Mixed precision test failed: {e}")
+        print(f"ERROR: Mixed precision test failed: {e}")
         return False
 
 
@@ -123,24 +123,24 @@ def test_distributed(torch):
     
     try:
         if torch.distributed.is_available():
-            print("✅ torch.distributed is available")
+            print("[OK] torch.distributed is available")
             
             if torch.distributed.is_nccl_available():
-                print("✅ NCCL backend is available")
+                print("[OK] NCCL backend is available")
             else:
-                print("⚠️  NCCL backend not available")
+                print("WARNING: NCCL backend not available")
             
             if torch.distributed.is_gloo_available():
-                print("✅ Gloo backend is available")
+                print("[OK] Gloo backend is available")
             else:
-                print("⚠️  Gloo backend not available")
+                print("WARNING: Gloo backend not available")
         else:
-            print("❌ torch.distributed is not available")
+            print("ERROR: torch.distributed is not available")
             return False
         
         return True
     except Exception as e:
-        print(f"❌ Distributed check failed: {e}")
+        print(f"ERROR: Distributed check failed: {e}")
         return False
 
 
@@ -149,7 +149,7 @@ def test_compile_support(torch):
     print_section("torch.compile Support Check")
     
     if not torch.cuda.is_available():
-        print("⚠️  CUDA not available, skipping compile test")
+        print("WARNING: CUDA not available, skipping compile test")
         return True
     
     try:
@@ -162,10 +162,10 @@ def test_compile_support(torch):
         with torch.no_grad():
             y = compiled_model(x)
         
-        print("✅ torch.compile is working")
+        print("[OK] torch.compile is working")
         return True
     except Exception as e:
-        print(f"⚠️  torch.compile test failed: {e}")
+        print(f"WARNING: torch.compile test failed: {e}")
         print("   This may be expected on some configurations")
         return True  # Don't fail on this
 
@@ -181,7 +181,7 @@ def main():
     # Check PyTorch import
     success, torch_module = check_pytorch_import()
     if not success:
-        print("\n❌ CRITICAL: PyTorch is not installed properly!")
+        print("\nERROR: CRITICAL: PyTorch is not installed properly!")
         return 1
     
     results['import'] = True
@@ -206,7 +206,7 @@ def main():
     ]
     
     for check_name, passed in checks:
-        status = "✅ PASS" if passed else "❌ FAIL"
+        status = "[OK] PASS" if passed else "ERROR: FAIL"
         print(f"{status}  {check_name}")
     
     # Critical checks that must pass
@@ -214,11 +214,11 @@ def main():
     critical_passed = all(results[check] for check in critical_checks)
     
     if critical_passed:
-        print("\n✅ All critical checks PASSED!")
+        print("\n[OK] All critical checks PASSED!")
         print("   PyTorch is properly installed and functional.")
         return 0
     else:
-        print("\n❌ Some critical checks FAILED!")
+        print("\nERROR: Some critical checks FAILED!")
         print("   Please review the output above.")
         return 1
 

@@ -56,6 +56,11 @@ def _speculative_worker(rank: int, world_size: int, steps: int, port: int) -> No
 
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed not available")
 def test_kv_cache_demo_runs_on_gloo():
+    from ch16.symmetric_memory_inference import symmetric_memory_available
+
+    if not symmetric_memory_available() or torch.cuda.device_count() < 2:
+        pytest.skip("Symmetric memory backend unavailable or insufficient GPUs")
+
     world_size = 2
     port = _find_free_port()
     spawn(_kv_worker, args=(world_size, 16, port), nprocs=world_size, join=True)
@@ -63,6 +68,11 @@ def test_kv_cache_demo_runs_on_gloo():
 
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed not available")
 def test_multi_model_demo_runs_on_gloo():
+    from ch16.symmetric_memory_inference import symmetric_memory_available
+
+    if not symmetric_memory_available() or torch.cuda.device_count() < 2:
+        pytest.skip("Symmetric memory backend unavailable or insufficient GPUs")
+
     world_size = 2
     port = _find_free_port()
     spawn(_multi_model_worker, args=(world_size, 2, port), nprocs=world_size, join=True)
@@ -70,6 +80,11 @@ def test_multi_model_demo_runs_on_gloo():
 
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed not available")
 def test_speculative_demo_runs_on_gloo():
+    from ch16.symmetric_memory_inference import symmetric_memory_available
+
+    if not symmetric_memory_available() or torch.cuda.device_count() < 2:
+        pytest.skip("Symmetric memory backend unavailable or insufficient GPUs")
+
     world_size = 2
     port = _find_free_port()
     spawn(_speculative_worker, args=(world_size, 2, port), nprocs=world_size, join=True)

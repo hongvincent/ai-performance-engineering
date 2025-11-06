@@ -35,7 +35,7 @@ def main() -> int:
 
         print(f"Device {ordinal}: {name} (CC {major}.{minor})")
         if coop:
-            print("  ✓ Cooperative launch supported.")
+            print("  Cooperative launch supported.")
         else:
             print("  ✗ Cooperative launch not supported on this device.")
             failures.append(ordinal)

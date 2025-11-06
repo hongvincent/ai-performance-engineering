@@ -35,14 +35,18 @@ Usage:
     # Test with 2-4 GPUs
     torchrun --nproc_per_node=4 symmetric_memory_8gpu.py
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -414,7 +418,7 @@ def main():
         print(f"Device: {torch.cuda.get_device_name(device)}")
         
         if world_size == 8:
-            print("✓ Optimal 8-GPU configuration")
+            print("Optimal 8-GPU configuration")
         else:
             print(f"⚠ Running with {world_size} GPUs (optimized for 8)")
         
@@ -424,7 +428,7 @@ def main():
     sym_mem_available = check_symmetric_memory_available()
     if rank == 0:
         if sym_mem_available:
-            print("✓ Symmetric memory API available")
+            print("Symmetric memory API available")
         else:
             print("⚠ Symmetric memory API not available")
             print("  Using fallback NCCL implementations")
@@ -473,16 +477,16 @@ def main():
         print("  4. NVLS: Specialized for 8-GPU, best overall (NCCL 2.28)")
         
         print("\nWhen to use Symmetric Memory:")
-        print("  ✓ Frequent small synchronizations (<4KB)")
-        print("  ✓ Custom reduction algorithms")
-        print("  ✓ Sub-microsecond latency requirements")
-        print("  ✓ Direct buffer access from kernels")
+        print("  Frequent small synchronizations (<4KB)")
+        print("  Custom reduction algorithms")
+        print("  Sub-microsecond latency requirements")
+        print("  Direct buffer access from kernels")
         
         print("\nWhen to use NCCL:")
-        print("  ✓ Standard collectives (AllReduce, AllGather)")
-        print("  ✓ Large messages (>1MB)")
-        print("  ✓ Production training (heavily optimized)")
-        print("  ✓ Multi-node communication")
+        print("  Standard collectives (AllReduce, AllGather)")
+        print("  Large messages (>1MB)")
+        print("  Production training (heavily optimized)")
+        print("  Multi-node communication")
         
         print("\nExpected Performance on 8x B200:")
         print("  - AllReduce 1GB: 700-800 GB/s bus bandwidth")

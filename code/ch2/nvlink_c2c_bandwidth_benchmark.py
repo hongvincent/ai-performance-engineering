@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 NVLink-C2C Bandwidth Benchmark for Grace-Blackwell GB10
 
-Measures actual CPU-GPU coherent bandwidth via NVLink-C2C (900 GB/s theoretical).
-Compares with discrete GPU PCIe bandwidth for reference.
+Measures coherent CPU↔GPU bandwidth via NVLink-C2C (900 GB/s aggregate,
+≈450 GB/s per direction). Compares against discrete GPU PCIe bandwidth for
+reference.
 
 Architecture detection:
 - GB10 (SM 12.x): Grace-Blackwell with NVLink-C2C
@@ -14,13 +25,13 @@ Usage:
     python nvlink_c2c_bandwidth_benchmark.py
 """
 
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import time
-import arch_config
+
+BENCHMARK_QUICK = os.environ.get("BENCHMARK_QUICK", "0") == "1"
 
 def detect_architecture():
     """Detect GPU architecture"""
@@ -46,7 +57,8 @@ def measure_h2d_bandwidth(size_mb=1024, iterations=100):
     gpu_tensor = torch.empty(size, device='cuda')
     
     # Warmup
-    for _ in range(10):
+    warmup_iters = 3 if BENCHMARK_QUICK else 10
+    for _ in range(warmup_iters):
         gpu_tensor.copy_(cpu_tensor, non_blocking=False)
     torch.cuda.synchronize()
     
@@ -74,7 +86,8 @@ def measure_d2h_bandwidth(size_mb=1024, iterations=100):
     cpu_tensor = torch.empty(size, device='cpu', pin_memory=True)
     
     # Warmup
-    for _ in range(10):
+    warmup_iters = 3 if BENCHMARK_QUICK else 10
+    for _ in range(warmup_iters):
         cpu_tensor.copy_(gpu_tensor, non_blocking=False)
     torch.cuda.synchronize()
     
@@ -108,7 +121,8 @@ def measure_bidirectional_bandwidth(size_mb=512, iterations=100):
     gpu_tensor_b = torch.randn(size, device='cuda')
     
     # Warmup
-    for _ in range(10):
+    warmup_iters = 3 if BENCHMARK_QUICK else 10
+    for _ in range(warmup_iters):
         with torch.cuda.stream(stream_h2d):
             gpu_tensor_a.copy_(cpu_tensor_src, non_blocking=True)
         with torch.cuda.stream(stream_d2h):
@@ -153,7 +167,8 @@ def measure_zero_copy_read_bandwidth(size_mb=1024, iterations=50):
         gpu_output.copy_(cpu_tensor, non_blocking=True)
     
     # Warmup
-    for _ in range(10):
+    warmup_iters = 3 if BENCHMARK_QUICK else 10
+    for _ in range(warmup_iters):
         zero_copy_kernel()
     torch.cuda.synchronize()
     
@@ -183,20 +198,22 @@ def main():
     print(f"\nArchitecture: ", end="")
     if arch_type == "gb10":
         print(f"Grace-Blackwell GB10 (SM {major}.{minor})")
-        print(f"Interconnect: NVLink-C2C (900 GB/s theoretical)")
+        print(f"Interconnect: NVLink-C2C (900 GB/s aggregate, ≈450/dir)")
     elif arch_type == "b200":
         print(f"Blackwell B200 (SM {major}.{minor})")
-        print(f"Interconnect: PCIe 5.0 (64 GB/s theoretical)")
+        print(f"Interconnect: PCIe 5.0 x16 (~128 GB/s aggregate)")
     else:
         print(f"Generic GPU (SM {major}.{minor})")
         print(f"Interconnect: Unknown")
     
     if arch_type != "gb10":
-        print("\n⚠️  WARNING: This benchmark is optimized for Grace-Blackwell GB10!")
+        print("\nWARNING: WARNING: This benchmark is optimized for Grace-Blackwell GB10!")
         print("   Results on discrete GPUs will show PCIe bandwidth, not NVLink-C2C.\n")
     
-    # Test different sizes
-    test_sizes = [256, 512, 1024, 2048]  # MB
+    test_sizes = [256, 512] if BENCHMARK_QUICK else [256, 512, 1024, 2048]
+    h2d_iterations = 5 if BENCHMARK_QUICK else 100
+    bidir_iterations = 5 if BENCHMARK_QUICK else 100
+    zero_copy_iterations = 3 if BENCHMARK_QUICK else 50
     
     print("\n" + "=" * 80)
     print("Test 1: Host-to-Device (H2D) Bandwidth")
@@ -205,7 +222,7 @@ def main():
     print("-" * 80)
     
     for size_mb in test_sizes:
-        bw, latency = measure_h2d_bandwidth(size_mb=size_mb, iterations=100)
+        bw, latency = measure_h2d_bandwidth(size_mb=size_mb, iterations=h2d_iterations)
         print(f"{size_mb:<12} {bw:<20.2f} {latency:<15.3f}")
     
     print("\n" + "=" * 80)
@@ -215,7 +232,7 @@ def main():
     print("-" * 80)
     
     for size_mb in test_sizes:
-        bw, latency = measure_d2h_bandwidth(size_mb=size_mb, iterations=100)
+        bw, latency = measure_d2h_bandwidth(size_mb=size_mb, iterations=h2d_iterations)
         print(f"{size_mb:<12} {bw:<20.2f} {latency:<15.3f}")
     
     print("\n" + "=" * 80)
@@ -224,8 +241,9 @@ def main():
     print(f"{'Size (MB)':<12} {'Combined BW (GB/s)':<20} {'Latency (ms)':<15}")
     print("-" * 80)
     
-    for size_mb in [128, 256, 512, 1024]:
-        bw, latency = measure_bidirectional_bandwidth(size_mb=size_mb, iterations=100)
+    bidir_sizes = [256, 512] if BENCHMARK_QUICK else [128, 256, 512, 1024]
+    for size_mb in bidir_sizes:
+        bw, latency = measure_bidirectional_bandwidth(size_mb=size_mb, iterations=bidir_iterations)
         print(f"{size_mb:<12} {bw:<20.2f} {latency:<15.3f}")
     
     # Peak measurement (large transfer)
@@ -233,13 +251,27 @@ def main():
     print("Peak Bandwidth Measurement (4 GB transfer)")
     print("=" * 80)
     
-    h2d_peak, _ = measure_h2d_bandwidth(size_mb=4096, iterations=50)
-    d2h_peak, _ = measure_d2h_bandwidth(size_mb=4096, iterations=50)
-    bidir_peak, _ = measure_bidirectional_bandwidth(size_mb=2048, iterations=50)
+    peak_iter = 5 if BENCHMARK_QUICK else 50
+    peak_size_mb = 512 if BENCHMARK_QUICK else 4096
+    h2d_peak, _ = measure_h2d_bandwidth(size_mb=peak_size_mb, iterations=peak_iter)
+    d2h_peak, _ = measure_d2h_bandwidth(size_mb=peak_size_mb, iterations=peak_iter)
+    bidir_peak_size = 256 if BENCHMARK_QUICK else 2048
+    bidir_peak, _ = measure_bidirectional_bandwidth(size_mb=bidir_peak_size, iterations=peak_iter)
     
     print(f"H2D Peak:          {h2d_peak:.2f} GB/s")
     print(f"D2H Peak:          {d2h_peak:.2f} GB/s")
     print(f"Bidirectional:     {bidir_peak:.2f} GB/s")
+
+    print("\n" + "=" * 80)
+    print("Test 4: Zero-Copy CPU Memory Reads")
+    print("=" * 80)
+    zero_copy_size_mb = 512 if BENCHMARK_QUICK else 1024
+    bw_zero_copy, latency_zero_copy = measure_zero_copy_read_bandwidth(
+        size_mb=zero_copy_size_mb, iterations=zero_copy_iterations
+    )
+    print(f"Size (MB):         {zero_copy_size_mb}")
+    print(f"Bandwidth:         {bw_zero_copy:.2f} GB/s")
+    print(f"Latency:           {latency_zero_copy:.3f} ms")
     
     # Theoretical comparison
     print("\n" + "=" * 80)
@@ -253,7 +285,7 @@ def main():
         print(f"D2H Achieved:              {d2h_peak:.2f} GB/s ({(d2h_peak/theoretical)*100:.1f}%)")
         print(f"Bidirectional:             {bidir_peak:.2f} GB/s ({(bidir_peak/theoretical)*100:.1f}%)")
         
-        print("\n✅ GB10 Benefits:")
+        print("\n[OK] GB10 Benefits:")
         print("  • 900 GB/s coherent CPU-GPU interconnect")
         print("  • Cache-coherent memory access")
         print("  • ~14x faster than PCIe 5.0 (64 GB/s)")
@@ -279,4 +311,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

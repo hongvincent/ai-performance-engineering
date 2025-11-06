@@ -8,12 +8,12 @@ CUDA Graphs eliminate kernel launch overhead by capturing and replaying entire w
 
 After completing this chapter, you can:
 
-- ✅ Capture and replay CUDA graphs for repeatable workloads
-- ✅ Use conditional graphs for dynamic execution paths
-- ✅ Implement dynamic parallelism for adaptive algorithms
-- ✅ Apply graph instantiation for parameter updates
-- ✅ Optimize launch overhead from 5-20 μs to <1 μs
-- ✅ Choose between graphs, streams, and dynamic parallelism
+- [OK] Capture and replay CUDA graphs for repeatable workloads
+- [OK] Explain the current state of conditional graph support and what APIs are still pending GA
+- [OK] Implement dynamic parallelism for adaptive algorithms
+- [OK] Apply graph instantiation for parameter updates
+- [OK] Optimize launch overhead from 5-20 μs to <1 μs
+- [OK] Choose between graphs, streams, and dynamic parallelism
 
 ## Prerequisites
 
@@ -132,53 +132,16 @@ make cuda_graphs
 ```
 Traditional launches (1000 kernels): 18.2 ms
 CUDA Graph replay (1000 kernels): 1.1 ms
-Speedup: 16.5x ✅
+Speedup: 16.5x [OK]
 ```
 
 ---
 
-### 2. `cuda_graphs_conditional.cu` - Conditional Graphs
+### 2. `cuda_graphs_conditional.cu` and `cuda_graphs_conditional_enhanced.cu` – Conditional Graphs
 
-**Purpose**: Execute different paths based on runtime conditions.
+**Purpose**: Demonstrate conditional graph nodes for dynamic execution paths.
 
-**Conditional nodes** (CUDA 12.4+):
-
-```cpp
-__global__ void evaluate_condition(int* input, int* output) {
-    *output = (*input > 100) ? 1 : 0;
-}
-
-// Create graph with conditional
-cudaGraph_t graph;
-cudaGraphCreate(&graph, 0);
-
-// Condition evaluation node
-cudaGraphNode_t cond_node;
-// ... add evaluate_condition kernel ...
-
-// True branch
-cudaGraph_t true_graph;
-cudaGraphCreate(&true_graph, 0);
-// ... add kernels for true path ...
-
-// False branch
-cudaGraph_t false_graph;
-cudaGraphCreate(&false_graph, 0);
-// ... add kernels for false path ...
-
-// Conditional node
-cudaGraphConditionalHandle handle;
-cudaGraphNodeParams params;
-params.type = cudaGraphNodeTypeConditional;
-params.conditional.handle = handle;
-params.conditional.ctx = ...;
-params.conditional.size = 1;
-cudaGraphAddNode(&cond_node, graph, ...);
-
-// Add conditional branches
-cudaGraphConditionalHandleSetGraph(handle, true_graph, 0);
-cudaGraphConditionalHandleSetGraph(handle, false_graph, 1);
-```
+Conditional graphs allow runtime decisions within a captured CUDA graph, enabling early exit and adaptive execution without graph re-instantiation.
 
 **Use cases**:
 - Early exit in iterative algorithms
@@ -198,10 +161,10 @@ make cuda_graphs_conditional
 **Purpose**: Enable kernels to launch other kernels, adapting to data.
 
 **Why dynamic parallelism?**
-- ✅ Adaptive algorithms (tree traversal, AMR, sorting)
-- ✅ Data-dependent parallelism
-- ✅ Recursive patterns
-- ❌ Not for regular workloads (overhead!)
+- [OK] Adaptive algorithms (tree traversal, AMR, sorting)
+- [OK] Data-dependent parallelism
+- [OK] Recursive patterns
+- ERROR: Not for regular workloads (overhead!)
 
 **Example: Adaptive Tree Traversal**
 
@@ -413,11 +376,11 @@ cudaGraphLaunch(instance, stream);
 ### When Graphs Can't Be Updated
 
 Some changes require re-instantiation:
-- ❌ Changing topology (adding/removing nodes)
-- ❌ Changing kernel function
-- ❌ Changing grid/block dimensions
-- ✅ Updating kernel parameters (OK!)
-- ✅ Updating memcpy addresses (OK!)
+- ERROR: Changing topology (adding/removing nodes)
+- ERROR: Changing kernel function
+- ERROR: Changing grid/block dimensions
+- [OK] Updating kernel parameters (OK!)
+- [OK] Updating memcpy addresses (OK!)
 
 ---
 
@@ -444,6 +407,27 @@ Does workload repeat exactly?
 
 ---
 
+## Baseline/Optimized Example Pairs
+
+All CUDA examples follow the `baseline_*.cu` / `optimized_*.cu` pattern:
+
+### Available Pairs
+
+1. **Kernel Fusion** (`baseline_kernel_fusion.cu` / `optimized_kernel_fusion.cu`)
+   - Separate kernels vs fused kernel using CUDA graphs
+   - Demonstrates launch overhead reduction through fusion
+
+2. **Graph Bandwidth** (`baseline_graph_bandwidth.cu` / `optimized_graph_bandwidth.cu`)
+   - Separate kernel launches vs CUDA graph execution
+   - Measures bandwidth improvements from graph capture
+
+**Run comparisons:**
+```bash
+python3 compare.py  # Compares all baseline/optimized pairs (via Python wrappers)
+```
+
+---
+
 ## How to Run All Examples
 
 ```bash
@@ -456,6 +440,12 @@ make
 ./cuda_graphs_sm100                    # Capture and replay
 ./cuda_graphs_conditional_sm100        # Conditional execution
 
+# Baseline/Optimized pairs
+./baseline_kernel_fusion_sm100          # Separate kernels
+./optimized_kernel_fusion_sm100        # Fused kernel
+./baseline_graph_bandwidth_sm100       # Separate launches
+./optimized_graph_bandwidth_sm100      # Graph execution
+
 # Dynamic parallelism
 ./dynamic_parallelism_sm100            # Recursive kernels
 ./dp_device_launched_sm100             # Device-side launch
@@ -467,7 +457,7 @@ make
 ./atomic_work_queue_sm100              # Work stealing
 
 # Profile to see launch overhead reduction
-../../common/profiling/profile_cuda.sh ./cuda_graphs baseline
+../../common/profiling/profile_cuda.sh ./optimized_kernel_fusion baseline
 ```
 
 ---
@@ -542,7 +532,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU, CUDA 13.0, sm_100 architecture
+**Chapter Status**: [OK] Complete
 

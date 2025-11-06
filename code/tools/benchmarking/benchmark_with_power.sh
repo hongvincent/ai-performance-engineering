@@ -4,7 +4,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 # Color output
@@ -57,7 +57,7 @@ if [ ! -f "$POWER_JSON" ]; then
 fi
 
 echo ""
-echo "✓ Power monitoring complete"
+echo "Power monitoring complete"
 echo ""
 
 # Step 2: Extract throughput from benchmark output
@@ -95,7 +95,7 @@ python3 tools/calculate_cost_per_token.py \
     --output-json "$COST_JSON"
 
 echo ""
-echo "✓ Cost analysis complete"
+echo "Cost analysis complete"
 echo ""
 
 # Step 4: Display summary

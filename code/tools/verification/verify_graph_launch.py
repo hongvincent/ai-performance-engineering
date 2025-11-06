@@ -39,7 +39,7 @@ def main() -> int:
 
         print(f"Device {ordinal}: {name} (CC {major}.{minor})")
         if supports_device_graph_launch(major, minor):
-            print("  ✓ Device-initiated CUDA Graph launches supported (CC ≥ 8.0).")
+            print("  Device-initiated CUDA Graph launches supported (CC ≥ 8.0).")
         else:
             print("  ✗ Requires compute capability 8.0 or newer for device-side graph launch.")
             failures.append(ordinal)

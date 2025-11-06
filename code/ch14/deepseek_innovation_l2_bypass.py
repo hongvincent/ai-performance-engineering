@@ -28,13 +28,20 @@ DeepSeek's Innovation:
 Hardware: NVIDIA B200 (SM 10.0, 178 GB HBM3e, 5th-gen Tensor Cores)
 Reference: DeepSeek-V3 Technical Report, Section 4.2
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 
 # Add parent directory to path to import arch_config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import arch_config  # noqa: F401 - Configure Blackwell optimizations
 
 import torch
 import triton
@@ -145,16 +152,21 @@ def matmul_fp8_deepseek_optimized(
     
     # Inner loop with optimized caching
     for k in range(0, tl.cdiv(K, BLOCK_K)):
-        # DeepSeek Innovation:
-        # 1. Load A (activations) with streaming eviction - read once, evict immediately
-        #    This prevents activations from polluting L2 cache
-        a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_K, other=0.0,
-                   eviction_policy="evict_first")  # PTX: ld.global.cs
-        
-        # 2. Load B (weights) with normal caching - keep in L2 for reuse
-        #    Weights are reused across many tiles, so cache them
-        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_K, other=0.0,
-                   eviction_policy="evict_last")  # PTX: ld.global.ca
+        # DeepSeek innovation:
+        # 1. Streaming loads for activations (evict_first) → PTX ld.global.cs
+        a = tl.load(
+            a_ptrs,
+            mask=offs_k[None, :] < K - k * BLOCK_K,
+            other=0.0,
+            eviction_policy="evict_first",
+        )
+        # 2. Cache weights aggressively (evict_last) → PTX ld.global.ca
+        b = tl.load(
+            b_ptrs,
+            mask=offs_k[:, None] < K - k * BLOCK_K,
+            other=0.0,
+            eviction_policy="evict_last",
+        )
         
         # Convert FP8 -> FP32 and accumulate
         a_fp32 = a.to(tl.float32)
@@ -189,6 +201,7 @@ def matmul_fp8_baseline_wrapper(a, b):
     grid = lambda META: (triton.cdiv(M, META['BLOCK_M']) * triton.cdiv(N, META['BLOCK_N']),)
     
     # Launch kernel
+    # NOTE: num_stages=1 disables cp.async so we can observe the impact of cache hints directly.
     matmul_fp8_baseline[grid](
         a, b, c,
         M, N, K,
@@ -196,6 +209,7 @@ def matmul_fp8_baseline_wrapper(a, b):
         b.stride(0), b.stride(1),
         c.stride(0), c.stride(1),
         BLOCK_M=128, BLOCK_N=128, BLOCK_K=64,
+        num_warps=4, num_stages=1,
     )
     
     return c
@@ -216,6 +230,7 @@ def matmul_fp8_deepseek_wrapper(a, b):
     grid = lambda META: (triton.cdiv(M, META['BLOCK_M']) * triton.cdiv(N, META['BLOCK_N']),)
     
     # Launch kernel
+    # Launch kernel with DeepSeek cache policy
     matmul_fp8_deepseek_optimized[grid](
         a, b, c,
         M, N, K,
@@ -223,6 +238,7 @@ def matmul_fp8_deepseek_wrapper(a, b):
         b.stride(0), b.stride(1),
         c.stride(0), c.stride(1),
         BLOCK_M=128, BLOCK_N=128, BLOCK_K=64,
+        num_warps=4, num_stages=1,
     )
     
     return c
@@ -234,7 +250,7 @@ def benchmark_gemm(fn, a, b, name):
     print(f"  Matrix size: {a.shape} x {b.shape} = {(a.shape[0], b.shape[1])}")
     
     # Use Triton's benchmarking - handles warmup, sync, outliers automatically
-    avg_time_ms = triton.testing.do_bench(lambda: fn(a, b))
+    avg_time_ms = triton.testing.do_bench(lambda: fn(a, b), rep=20)
     
     # Compute FLOPS
     M, K = a.shape
@@ -260,6 +276,8 @@ def main():
     print("3. This is controlled via inline PTX in production code")
     print("4. Triton 3.5 exposes this via eviction_policy parameter")
     print()
+    print("USE_DEEPSEEK_LOADS=on (hardcoded for the demo; edit kernel to explore variants)")
+    print()
     
     # Check GPU
     if not torch.cuda.is_available():
@@ -275,13 +293,12 @@ def main():
     # Test different matrix sizes
     test_sizes = [
         (2048, 2048, 2048, "Small (2K)"),
-        (4096, 4096, 4096, "Medium (4K)"),
-        (8192, 8192, 8192, "Large (8K)"),
     ]
     
     print("=" * 80)
     print("BENCHMARKS")
     print("=" * 80)
+    print("(Lightweight demo: modify `test_sizes` if you need larger benchmarks)")
     
     for M, K, N, name in test_sizes:
         print(f"\n{name}: M={M}, K={K}, N={N}")

@@ -153,7 +153,7 @@ def main() -> int:
         print(f"  Total global memory: {bytes_to_gib(total_mem_bytes):.2f} GiB")
 
         if mem_clock_khz <= 0 or bus_width_bits <= 0:
-            print("  ⚠️  Driver did not report memory clock / bus width; unable to compute theoretical bandwidth.")
+            print("  WARNING: Driver did not report memory clock / bus width; unable to compute theoretical bandwidth.")
             continue
 
         peak_bytes = bandwidth_bytes_per_sec(mem_clock_khz, bus_width_bits)

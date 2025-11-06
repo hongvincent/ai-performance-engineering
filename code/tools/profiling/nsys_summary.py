@@ -3,7 +3,7 @@
 Utility to summarise Nsight Systems reports across the Blackwell codebase.
 
 Example:
-    python tools/nsys_summary.py --glob "profiles/*.nsys-rep" \
+    python tools/nsys_summary.py --glob "output/*.nsys-rep" \
         --kernel-regex "attn|mma" --top-k 8 --output results/nsys_summary.txt
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Iterable
 
 # Ensure project root on path
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -96,7 +96,7 @@ def main() -> int:
         "--glob",
         default=None,
         help="Glob pattern (relative to CWD) to locate reports "
-        "(e.g. 'profiles/*.nsys-rep').",
+        "(e.g. 'output/*.nsys-rep').",
     )
     parser.add_argument(
         "--kernel-regex",

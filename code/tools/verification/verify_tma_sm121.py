@@ -35,7 +35,7 @@ try:
     from arch_config import ArchitectureConfig, configure_optimizations
     configure_optimizations()
 except ImportError:
-    print("⚠️  Warning: Could not import arch_config, continuing without optimizations")
+    print("WARNING: Warning: Could not import arch_config, continuing without optimizations")
     ArchitectureConfig = None
 
 
@@ -51,7 +51,7 @@ def check_gpu_info() -> Dict[str, any]:
     print_section("GPU Information")
     
     if not torch.cuda.is_available():
-        print("❌ CUDA is not available")
+        print("ERROR: CUDA is not available")
         return {"available": False}
     
     device = torch.cuda.current_device()
@@ -67,26 +67,26 @@ def check_gpu_info() -> Dict[str, any]:
         "multi_processor_count": props.multi_processor_count,
     }
     
-    print(f"✓ GPU: {info['name']}")
-    print(f"✓ Compute Capability: {info['compute_capability']}")
-    print(f"✓ Total Memory: {info['total_memory']:.2f} GB")
-    print(f"✓ SM Count: {info['multi_processor_count']}")
+    print(f"GPU: {info['name']}")
+    print(f"Compute Capability: {info['compute_capability']}")
+    print(f"Total Memory: {info['total_memory']:.2f} GB")
+    print(f"SM Count: {info['multi_processor_count']}")
     
     # Check TMA support (SM 9.0+ for Hopper, SM 10.0+ for Blackwell, SM 12.1 for GB10)
     if info['major'] >= 12 or (info['major'] == 12 and info['minor'] >= 1):
-        print(f"✓ TMA Support: YES (Grace-Blackwell GB10)")
+        print(f"TMA Support: YES (Grace-Blackwell GB10)")
         info['tma_supported'] = True
         info['arch'] = 'grace_blackwell'
     elif info['major'] >= 10:
-        print(f"✓ TMA Support: YES (Blackwell)")
+        print(f"TMA Support: YES (Blackwell)")
         info['tma_supported'] = True
         info['arch'] = 'blackwell'
     elif info['major'] >= 9:
-        print(f"✓ TMA Support: YES (Hopper)")
+        print(f"TMA Support: YES (Hopper)")
         info['tma_supported'] = True
         info['arch'] = 'hopper'
     else:
-        print(f"❌ TMA Support: NO (requires SM 9.0+, found {info['compute_capability']})")
+        print(f"ERROR: TMA Support: NO (requires SM 9.0+, found {info['compute_capability']})")
         info['tma_supported'] = False
         info['arch'] = 'other'
     
@@ -97,9 +97,9 @@ def check_software_versions():
     """Check software versions."""
     print_section("Software Versions")
     
-    print(f"✓ PyTorch: {torch.__version__}")
-    print(f"✓ Triton: {triton.__version__}")
-    print(f"✓ CUDA Runtime: {torch.version.cuda}")
+    print(f"PyTorch: {torch.__version__}")
+    print(f"Triton: {triton.__version__}")
+    print(f"CUDA Runtime: {torch.version.cuda}")
     
     # Check for CUDA compiler
     try:
@@ -109,20 +109,13 @@ def check_software_versions():
             # Extract version from output
             for line in result.stdout.split('\n'):
                 if 'release' in line.lower():
-                    print(f"✓ NVCC: {line.strip()}")
+                    print(f"NVCC: {line.strip()}")
                     break
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        print("⚠️  NVCC not found or not accessible")
+        print("WARNING: NVCC not found or not accessible")
     
-    # Check environment variables
-    print("\nTMA-related Environment Variables:")
-    tma_vars = {
-        "TRITON_TMA_ENABLE": os.environ.get("TRITON_TMA_ENABLE", "not set"),
-        "TRITON_CUDNN_ALGOS": os.environ.get("TRITON_CUDNN_ALGOS", "not set"),
-        "TRITON_ALWAYS_COMPILE": os.environ.get("TRITON_ALWAYS_COMPILE", "not set"),
-    }
-    for key, value in tma_vars.items():
-        print(f"  {key}: {value}")
+    # Note: TMA is enabled automatically via compute capability and API usage.
+    # No environment variables are required or checked.
 
 
 def test_triton_tma_basic() -> str:
@@ -169,26 +162,26 @@ def test_triton_tma_basic() -> str:
         
         # Verify correctness
         if torch.allclose(x, y, rtol=1e-5):
-            print("✓ Triton TMA basic copy: PASSED")
+            print("Triton TMA basic copy: PASSED")
             print(f"  - Copied {N} elements using TMA descriptors")
             print(f"  - Block size: {BLOCK_SIZE}")
             return "pass"
         else:
-            print("❌ Triton TMA basic copy: FAILED (incorrect results)")
+            print("ERROR: Triton TMA basic copy: FAILED (incorrect results)")
             return "fail"
             
     except PTXASError as e:
         msg = str(e)
         if "tensormap.replace" in msg and "not supported on .target 'sm_121'" in msg:
-            print("⚠️  Triton TMA basic copy: SKIPPED")
+            print("WARNING: Triton TMA basic copy: SKIPPED")
             print("   Reason: CUDA 13.0 ptxas does not enable tensormap instructions for sm_121.")
             print("   Action: upgrade to a CUDA toolkit that advertises TMA for SM 12.1.")
             return "skip"
-        print(f"❌ Triton TMA basic copy: FAILED")
+        print(f"ERROR: Triton TMA basic copy: FAILED")
         print(f"   PTXAS error: {e}")
         return "fail"
     except Exception as e:
-        print(f"❌ Triton TMA basic copy: FAILED")
+        print(f"ERROR: Triton TMA basic copy: FAILED")
         print(f"   Error: {e}")
         return "fail"
 
@@ -268,28 +261,28 @@ def test_triton_tma_gemm() -> str:
         # Verify against PyTorch
         C_ref = torch.matmul(A, B)
         if torch.allclose(C, C_ref, rtol=1e-3, atol=1e-3):
-            print("✓ Triton TMA GEMM: PASSED")
+            print("Triton TMA GEMM: PASSED")
             print(f"  - Matrix size: {M}x{K} @ {K}x{N}")
             print(f"  - Block config: {BLOCK_M}x{BLOCK_N}x{BLOCK_K} (conservative)")
             print(f"  - Note: Using conservative config due to Triton 3.5 compiler bug")
             return "pass"
         else:
             max_diff = torch.max(torch.abs(C - C_ref)).item()
-            print(f"❌ Triton TMA GEMM: FAILED (max diff: {max_diff})")
+            print(f"ERROR: Triton TMA GEMM: FAILED (max diff: {max_diff})")
             return "fail"
             
     except PTXASError as e:
         msg = str(e)
         if "tensormap.replace" in msg and "not supported on .target 'sm_121'" in msg:
-            print("⚠️  Triton TMA GEMM: SKIPPED")
+            print("WARNING: Triton TMA GEMM: SKIPPED")
             print("   Reason: CUDA 13.0 ptxas does not enable tensormap instructions for sm_121.")
             print("   Action: upgrade to a CUDA toolkit that advertises TMA for SM 12.1.")
             return "skip"
-        print(f"❌ Triton TMA GEMM: FAILED")
+        print(f"ERROR: Triton TMA GEMM: FAILED")
         print(f"   PTXAS error: {e}")
         return "fail"
     except Exception as e:
-        print(f"❌ Triton TMA GEMM: FAILED")
+        print(f"ERROR: Triton TMA GEMM: FAILED")
         print(f"   Error: {e}")
         import traceback
         traceback.print_exc()
@@ -330,18 +323,18 @@ def test_pytorch_compile_tma() -> str:
         C_ref = torch.matmul(A, B)
         if torch.allclose(C, C_ref, rtol=1e-2, atol=1e-2):
             tflops = (2 * M * N * K * 10) / (elapsed * 1e12)
-            print("✓ PyTorch torch.compile: PASSED")
+            print("PyTorch torch.compile: PASSED")
             print(f"  - Matrix size: {M}x{K} @ {K}x{N}")
             print(f"  - Performance: {tflops:.2f} TFLOPS")
             print(f"  - Average time: {elapsed/10*1000:.2f} ms")
             print(f"  - Mode: max-autotune (TMA-aware)")
             return "pass"
         else:
-            print("❌ PyTorch torch.compile: FAILED (incorrect results)")
+            print("ERROR: PyTorch torch.compile: FAILED (incorrect results)")
             return "fail"
             
     except Exception as e:
-        print(f"❌ PyTorch torch.compile: FAILED")
+        print(f"ERROR: PyTorch torch.compile: FAILED")
         print(f"   Error: {e}")
         return "fail"
 
@@ -363,7 +356,7 @@ def test_cuda_tma_compilation() -> str:
             found_examples.append(full_path)
     
     if not found_examples:
-        print("⚠️  No CUDA TMA examples found to compile")
+        print("WARNING: No CUDA TMA examples found to compile")
         print("   Expected examples in ch10/ or ch7/")
         return "fail"
     
@@ -397,7 +390,7 @@ def test_cuda_tma_compilation() -> str:
         )
         
         if result.returncode == 0:
-            print("✓ CUDA TMA compilation: PASSED")
+            print("CUDA TMA compilation: PASSED")
             print(f"  - Compiled for SM 12.1 (GB10)")
             print(f"  - Output: {output_binary}")
             
@@ -414,25 +407,25 @@ def test_cuda_tma_compilation() -> str:
                     env=run_env
                 )
                 if run_result.returncode == 0:
-                    print("✓ CUDA TMA execution: PASSED")
+                    print("CUDA TMA execution: PASSED")
                     print("\nOutput:")
                     print(run_result.stdout)
                 else:
-                    print(f"⚠️  Execution failed with code {run_result.returncode}")
+                    print(f"WARNING: Execution failed with code {run_result.returncode}")
                     if run_result.stderr:
                         print(f"Error: {run_result.stderr}")
             
             return "pass"
         else:
-            print("❌ CUDA TMA compilation: FAILED")
+            print("ERROR: CUDA TMA compilation: FAILED")
             print(f"Error output:\n{result.stderr}")
             return "fail"
             
     except subprocess.TimeoutExpired:
-        print("❌ CUDA TMA compilation: TIMEOUT")
+        print("ERROR: CUDA TMA compilation: TIMEOUT")
         return "fail"
     except Exception as e:
-        print(f"❌ CUDA TMA compilation: FAILED")
+        print(f"ERROR: CUDA TMA compilation: FAILED")
         print(f"   Error: {e}")
         return "fail"
 
@@ -455,21 +448,21 @@ def print_summary(results: Dict[str, str]):
     
     for test_name, result in results.items():
         if result == "pass":
-            status = "✓ PASS"
+            status = "PASS"
         elif result == "skip":
-            status = "⚠️ SKIP"
+            status = "WARNING: SKIP"
         else:
-            status = "❌ FAIL"
+            status = "ERROR: FAIL"
         print(f"  {status}: {test_name}")
     
     print()
     if failed == 0:
         if skipped:
-            print("⚠️  TMA passed for available components; some checks were skipped.")
+            print("WARNING: TMA passed for available components; some checks were skipped.")
         else:
             print("🎉 All TMA tests passed! TMA is properly enabled on your GB10.")
     else:
-        print("⚠️  Some tests failed. Review the output above for details.")
+        print("WARNING: Some tests failed. Review the output above for details.")
     
     return failed == 0
 
@@ -483,11 +476,11 @@ def main():
     # Check GPU info
     gpu_info = check_gpu_info()
     if not gpu_info.get('available'):
-        print("\n❌ Cannot proceed without CUDA GPU")
+        print("\nERROR: Cannot proceed without CUDA GPU")
         return 1
     
     if not gpu_info.get('tma_supported'):
-        print("\n❌ GPU does not support TMA")
+        print("\nERROR: GPU does not support TMA")
         return 1
     
     # Check software versions

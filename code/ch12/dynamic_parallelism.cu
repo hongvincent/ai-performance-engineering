@@ -353,7 +353,7 @@ bool demonstrateDeviceGraphLaunch() {
     
     // Create a graph to be launched from device
     cudaStream_t stream;
-    CUDA_CHECK(cudaStreamCreate(&stream));
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     
     printf("Creating graph for device-initiated launch...\n");
     

@@ -11,7 +11,15 @@ statistics. All ranks receive the same request stream via broadcast so the
 continuous batching state remains consistent across tensor-parallel workers.
 """
 
+
 from __future__ import annotations
+
+import pathlib
+import sys
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import argparse
 import json

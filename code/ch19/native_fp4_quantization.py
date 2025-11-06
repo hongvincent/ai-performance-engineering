@@ -28,14 +28,18 @@ Requirements:
 - torch._scaled_mm support
 
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import torch
@@ -283,19 +287,33 @@ class FP4MLP(nn.Module):
     Ideal for draft models, speculative decoding, or large-scale deployment.
     """
     
-    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1,
-                 dtype: torch.dtype = torch.float16, block_size: int = 128):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int,
+        dropout: float = 0.1,
+        dtype: torch.dtype = torch.float16,
+        block_size: int = 128,
+        *,
+        use_fp4: bool = True,
+    ):
         super().__init__()
         
-        self.fc1 = FP4Linear(d_model, d_ff, dtype=dtype, block_size=block_size)
-        self.fc2 = FP4Linear(d_ff, d_model, dtype=dtype, block_size=block_size)
+        self.use_fp4 = use_fp4
+        if use_fp4:
+            self.fc1 = FP4Linear(d_model, d_ff, dtype=dtype, block_size=block_size)
+            self.fc2 = FP4Linear(d_ff, d_model, dtype=dtype, block_size=block_size)
+        else:
+            self.fc1 = nn.Linear(d_model, d_ff, bias=True, dtype=dtype)
+            self.fc2 = nn.Linear(d_ff, d_model, bias=True, dtype=dtype)
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.GELU()
     
     def quantize(self):
         """Quantize all layers to FP4."""
-        self.fc1.quantize()
-        self.fc2.quantize()
+        for layer in (self.fc1, self.fc2):
+            if hasattr(layer, "quantize"):
+                layer.quantize()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with FP4 weights."""
@@ -332,6 +350,14 @@ def benchmark_fp4_vs_baselines():
     seq_len = 2048
     d_model = 4096
     d_ff = 16384  # 4x expansion
+    warmup_iters = 10 if torch.cuda.is_available() else 2
+    benchmark_iters = 50 if torch.cuda.is_available() else 5
+    
+    if not torch.cuda.is_available():
+        batch_size = min(batch_size, 8)
+        seq_len = min(seq_len, 256)
+        d_model = min(d_model, 1024)
+        d_ff = min(d_ff, 4096)
     
     print(f"\nConfiguration:")
     print(f"  Batch size: {batch_size}")
@@ -350,20 +376,22 @@ def benchmark_fp4_vs_baselines():
     print("\n" + "=" * 80)
     print("FP16 Baseline")
     print("=" * 80)
-    mlp_fp16 = FP4MLP(d_model, d_ff, dtype=dtype).to(device)
+    mlp_fp16 = FP4MLP(d_model, d_ff, dtype=dtype, use_fp4=False).to(device)
     # Note: FP16 version doesn't need quantization
     
     # Warmup
-    for _ in range(10):
+    for _ in range(warmup_iters):
         _ = mlp_fp16(x)
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     
     # Benchmark
     start = time.time()
-    for _ in range(50):
+    for _ in range(benchmark_iters):
         output_fp16 = mlp_fp16(x)
-    torch.cuda.synchronize()
-    time_fp16 = (time.time() - start) / 50
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    time_fp16 = (time.time() - start) / benchmark_iters
     
     mem_fp16 = sum([p.numel() * p.element_size() for p in mlp_fp16.parameters()]) / 1024**2
     
@@ -377,7 +405,7 @@ def benchmark_fp4_vs_baselines():
     print("\n" + "=" * 80)
     print("FP4 Quantized")
     print("=" * 80)
-    mlp_fp4 = FP4MLP(d_model, d_ff, dtype=dtype, block_size=128).to(device)
+    mlp_fp4 = FP4MLP(d_model, d_ff, dtype=dtype, block_size=128, use_fp4=True).to(device)
     mlp_fp4.quantize()
     
     # Report memory usage
@@ -385,18 +413,20 @@ def benchmark_fp4_vs_baselines():
     print(f"  FC1 compression: {mem_stats_fp4['compression_ratio']:.2f}x")
     
     # Warmup
-    for _ in range(10):
+    for _ in range(warmup_iters):
         _ = mlp_fp4(x)
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     
     # Benchmark
     start = time.time()
-    for _ in range(50):
+    for _ in range(benchmark_iters):
         output_fp4 = mlp_fp4(x)
-    torch.cuda.synchronize()
-    time_fp4 = (time.time() - start) / 50
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    time_fp4 = (time.time() - start) / benchmark_iters
     
-    mem_fp4 = (mlp_fp4.fc1.memory_usage()['total_bytes'] + 
+    mem_fp4 = (mlp_fp4.fc1.memory_usage()['total_bytes'] +
                mlp_fp4.fc2.memory_usage()['total_bytes']) / 1024**2
     
     print(f"  Latency: {time_fp4 * 1000:.2f} ms")
@@ -438,18 +468,18 @@ def benchmark_fp4_vs_baselines():
     print("\n" + "=" * 80)
     print("FP4 Benefits on Blackwell B200")
     print("=" * 80)
-    print("  ✓ 75% memory savings vs FP16 (4x model capacity)")
-    print("  ✓ 50% memory savings vs FP8 (2x model capacity)")
-    print(f"  ✓ {results['fp16']['time'] / results['fp4']['time']:.2f}x throughput improvement")
-    print(f"  ✓ ~{rel_error_fp4 * 100:.1f}% relative error")
-    print("  ✓ Highest tensor core throughput (~1600 TFLOPS)")
-    print("  ✓ Ideal for draft models and speculative decoding")
+    print("  75% memory savings vs FP16 (4x model capacity)")
+    print("  50% memory savings vs FP8 (2x model capacity)")
+    print(f"  {results['fp16']['time'] / results['fp4']['time']:.2f}x throughput improvement")
+    print(f"  ~{rel_error_fp4 * 100:.1f}% relative error")
+    print("  Highest tensor core throughput (~1600 TFLOPS)")
+    print("  Ideal for draft models and speculative decoding")
     
     if is_blackwell():
-        print("\n✅ Running on Blackwell - FP4 tensor cores active!")
+        print("\n[OK] Running on Blackwell - FP4 tensor cores active!")
         print("   Native FP4 acceleration provides maximum throughput")
     else:
-        print("\n⚠️  Not running on Blackwell - emulating FP4 in software")
+        print("\nWARNING: Not running on Blackwell - emulating FP4 in software")
 
 
 def demonstrate_extreme_compression():
@@ -507,19 +537,17 @@ if __name__ == "__main__":
     print("=" * 80)
     
     # Check device
-    if not torch.cuda.is_available():
-        print("❌ CUDA not available")
-        exit(1)
-    
-    props = torch.cuda.get_device_properties(0)
-    print(f"\nGPU: {props.name}")
-    print(f"Compute Capability: {props.major}.{props.minor}")
-    print(f"Blackwell: {'YES ✓' if is_blackwell() else 'NO'}")
-    
-    if not is_blackwell():
-        print("\n⚠️  Warning: Not running on Blackwell B200/B300")
-        print("FP4 is optimized for Blackwell's 5th-gen tensor cores.")
-        print("Performance may be suboptimal on other architectures.")
+    if torch.cuda.is_available():
+        props = torch.cuda.get_device_properties(0)
+        print(f"\nGPU: {props.name}")
+        print(f"Compute Capability: {props.major}.{props.minor}")
+        print(f"Blackwell: {'YES ' if is_blackwell() else 'NO'}")
+        if not is_blackwell():
+            print("\nWARNING: Warning: Not running on Blackwell B200/B300")
+            print("FP4 is optimized for Blackwell's 5th-gen tensor cores.")
+            print("Performance may be suboptimal on other architectures.")
+    else:
+        print("\nWARNING: CUDA not available - running FP4 demo with CPU emulation for validation purposes.")
     
     # Run benchmarks
     benchmark_fp4_vs_baselines()
@@ -536,11 +564,11 @@ if __name__ == "__main__":
     print("  4. Best for inference where extreme compression is needed")
     print("  5. Enables serving 4x more models on single GPU")
     print("\nWhen to Use FP4:")
-    print("  ✓ Draft models (speculative decoding)")
-    print("  ✓ Cost-optimized inference deployment")
-    print("  ✓ Multi-model serving scenarios")
-    print("  ✓ Edge devices with strict memory limits")
-    print("  ✓ Research on ultra-large models")
+    print("  Draft models (speculative decoding)")
+    print("  Cost-optimized inference deployment")
+    print("  Multi-model serving scenarios")
+    print("  Edge devices with strict memory limits")
+    print("  Research on ultra-large models")
     print("\nWhen NOT to Use FP4:")
     print("  ✗ High-accuracy production models")
     print("  ✗ Training (too low precision)")

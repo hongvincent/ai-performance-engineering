@@ -1,34 +1,21 @@
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+"""Sanity checks for FlexAttention availability on Blackwell-class GPUs."""
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+from __future__ import annotations
 
-#!/usr/bin/env python3
+import pytest
 import torch
 
-print("PyTorch version:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
 
-# Try to import flex_attention
-try:
-    from torch.nn.attention import flex_attention
-    print(" FlexAttention imported successfully!")
-    print("Type:", type(flex_attention))
-    print("Available methods:", [x for x in dir(flex_attention) if not x.startswith('_')])
-except ImportError as e:
-    print(" ImportError:", e)
-except AttributeError as e:
-    print(" AttributeError:", e)
-except Exception as e:
-    print(" Unexpected error:", e)
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device unavailable")
+def test_flex_attention_available() -> None:
+    """FlexAttention should import and expose a callable on Blackwell GPUs."""
+    major, minor = torch.cuda.get_device_capability()
+    if major < 12:
+        pytest.skip(f"FlexAttention requires Blackwell-class GPUs (got sm_{major}{minor})")
 
-# Check what's available in torch.nn.attention
-print("\nAvailable in torch.nn.attention:")
-import torch.nn.attention as attention
-for item in dir(attention):
-    if not item.startswith('_'):
-        print(f"  - {item}")
+    try:
+        from torch.nn.attention.flex_attention import flex_attention  # type: ignore[attr-defined]
+    except Exception as exc:  # pragma: no cover - surface import issues
+        pytest.fail(f"torch.nn.attention.flex_attention import failed: {exc}")
+
+    assert callable(flex_attention)

@@ -8,12 +8,12 @@ Dynamic routing adapts inference strategies based on request complexity, while e
 
 After completing this chapter, you can:
 
-- ✅ Implement early exit strategies for faster inference
-- ✅ Apply dynamic routing based on request complexity
-- ✅ Use adaptive batching for mixed workloads
-- ✅ Optimize latency vs accuracy trade-offs
-- ✅ Profile and analyze inference with roofline models
-- ✅ Deploy confidence-based early termination
+- [OK] Implement early exit strategies for faster inference
+- [OK] Apply dynamic routing based on request complexity
+- [OK] Use adaptive batching for mixed workloads
+- [OK] Optimize latency vs accuracy trade-offs
+- [OK] Profile and analyze inference with roofline models
+- [OK] Deploy confidence-based early termination
 
 ## Prerequisites
 
@@ -198,13 +198,13 @@ python3 dynamic_routing.py
 
 ---
 
-### 3. `blackwell_profiling_guide.py` - Blackwell-Specific Profiling
+### 3. `blackwell_profiling_guide.py` - NVIDIA GPU-Specific Profiling
 
-**Purpose**: Profile inference on Blackwell GPUs with architecture-specific metrics.
+**Purpose**: Profile inference on NVIDIA GPUs with architecture-specific metrics.
 
 ```python
 def profile_blackwell_inference(model, input_ids):
-    """Profile with Blackwell-specific metrics."""
+    """Profile with NVIDIA GPU-specific metrics."""
     
     # NVIDIA SMI metrics
     import pynvml
@@ -227,11 +227,11 @@ def profile_blackwell_inference(model, input_ids):
     end_power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000
     end_temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
     
-    # Blackwell-specific metrics
+    # NVIDIA GPU-specific metrics
     sm_util = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
     mem_util = pynvml.nvmlDeviceGetUtilizationRates(handle).memory
     
-    print(f"Blackwell (sm_100) Metrics:")
+    print(f"NVIDIA GPU (modern compute capability) Metrics:")
     print(f"  SM Utilization: {sm_util}%")
     print(f"  Memory Utilization: {mem_util}%")
     print(f"  Power: {end_power:.1f} W")
@@ -319,7 +319,7 @@ def plot_roofline(kernels, peak_bandwidth_gbs, peak_compute_tflops):
     
     plt.xlabel('Arithmetic Intensity (FLOP/Byte)')
     plt.ylabel('Performance (GFLOPS)')
-    plt.title('Roofline Model - B200 (sm_100)')
+    plt.title('Roofline Model - NVIDIA GPU (modern compute capability)')
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.savefig('roofline.png')
@@ -439,7 +439,7 @@ python3 early_rejection.py
 # Dynamic routing
 python3 dynamic_routing.py
 
-# Blackwell profiling
+# NVIDIA GPU profiling
 python3 blackwell_profiling_guide.py
 python3 blackwell_roofline_analysis.py
 
@@ -512,7 +512,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9
+**Chapter Status**: [OK] Complete
 

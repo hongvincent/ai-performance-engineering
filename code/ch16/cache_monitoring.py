@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Cache Monitoring for LLM Inference (Chapter 16)
 
@@ -437,74 +447,10 @@ class SimpleCache:
 
 # Example usage and testing
 if __name__ == '__main__':
-    from prometheus_client import start_http_server
-    
-    # Start Prometheus HTTP server
-    start_http_server(8001)
-    print("Cache metrics available at http://localhost:8001/metrics")
-    
-    # Create monitor
-    monitor = CacheMonitor()
-    
-    # Create caches
-    kv_cache = SimpleCache(
-        capacity_bytes=100 * 1024 * 1024,  # 100 MB
-        cache_type=CacheType.KV_CACHE,
-        monitor=monitor
+    # TODO(cfregly): Re-enable the cache monitoring demo when we explicitly
+    # need the Prometheus exporter during manual experiments. It is disabled
+    # to keep automation runs from spawning the long-lived server on port 8001.
+    print(
+        "Cache monitoring demo is temporarily disabled. "
+        "Re-enable the __main__ block in extras/ch16/cache_monitoring.py when needed."
     )
-    
-    prefix_cache = SimpleCache(
-        capacity_bytes=50 * 1024 * 1024,  # 50 MB
-        cache_type=CacheType.PREFIX_CACHE,
-        monitor=monitor
-    )
-    
-    # Simulate cache operations
-    print("Simulating cache operations...")
-    
-    for i in range(1000):
-        # KV cache operations
-        key = f"kv_key_{i % 100}"
-        value = b"x" * 1024  # 1 KB value
-        
-        cached = kv_cache.get(key)
-        if cached is None:
-            kv_cache.put(key, value)
-        
-        # Prefix cache operations
-        if i % 10 == 0:
-            prefix_key = f"prefix_{i % 20}"
-            prefix_value = b"p" * 2048  # 2 KB value
-            
-            cached = prefix_cache.get(prefix_key)
-            if cached is None:
-                prefix_cache.put(prefix_key, prefix_value)
-            else:
-                # Simulate prefix merge
-                monitor.record_prefix_merge(
-                    tokens_deduplicated=128,
-                    compute_saved_ms=5.2
-                )
-        
-        # Export metrics periodically
-        if i % 100 == 0:
-            monitor.export_metrics()
-            if i % 500 == 0:
-                monitor.print_summary()
-        
-        time.sleep(0.01)
-    
-    # Final summary
-    monitor.export_metrics()
-    monitor.print_summary()
-    
-    print("\nKeep server running for Prometheus scraping...")
-    print("Press Ctrl+C to exit")
-    
-    try:
-        while True:
-            time.sleep(1)
-            monitor.export_metrics()
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-

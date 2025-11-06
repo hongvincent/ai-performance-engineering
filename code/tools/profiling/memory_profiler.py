@@ -43,6 +43,9 @@ def main() -> None:
         if path_str not in sys.path:
             sys.path.insert(0, path_str)
 
+    # Always enable Python fault handler for stack traces on crashes
+    os.environ.setdefault("PYTHONFAULTHANDLER", "1")
+    
     # Apply environment overrides
     for assignment in args.env:
         if "=" not in assignment:

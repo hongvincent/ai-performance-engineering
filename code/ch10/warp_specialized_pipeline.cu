@@ -28,6 +28,7 @@ namespace cg = cooperative_groups;
 template <int TILE>
 __device__ void compute_tile(const float* a, const float* b, float* c, int lane) {
   constexpr int TILE_ELEMS = TILE * TILE;
+  constexpr size_t TILE_BYTES = static_cast<size_t>(TILE_ELEMS) * sizeof(float);
   for (int idx = lane; idx < TILE_ELEMS; idx += warpSize) {
     float x = a[idx];
     float y = b[idx];
@@ -69,10 +70,16 @@ __global__ void warp_specialized_kernel(const float* __restrict__ A,
     size_t offset = static_cast<size_t>(tile_index) * TILE_ELEMS;
 
     pipe.producer_acquire();
-    for (int idx = threadIdx.x; idx < TILE_ELEMS; idx += blockDim.x) {
-      stage_a[idx] = A[offset + idx];
-      stage_b[idx] = B[offset + idx];
-    }
+    cuda::memcpy_async(block,
+                       stage_a,
+                       A + offset,
+                       cuda::aligned_size_t<16>{TILE_BYTES},
+                       pipe);
+    cuda::memcpy_async(block,
+                       stage_b,
+                       B + offset,
+                       cuda::aligned_size_t<16>{TILE_BYTES},
+                       pipe);
     pipe.producer_commit();
   }
 
@@ -116,10 +123,16 @@ __global__ void warp_specialized_kernel(const float* __restrict__ A,
       size_t next_offset = static_cast<size_t>(next_tile) * TILE_ELEMS;
 
       pipe.producer_acquire();
-      for (int idx = threadIdx.x; idx < TILE_ELEMS; idx += blockDim.x) {
-        next_a[idx] = A[next_offset + idx];
-        next_b[idx] = B[next_offset + idx];
-      }
+      cuda::memcpy_async(block,
+                         next_a,
+                         A + next_offset,
+                         cuda::aligned_size_t<16>{TILE_BYTES},
+                         pipe);
+      cuda::memcpy_async(block,
+                         next_b,
+                         B + next_offset,
+                         cuda::aligned_size_t<16>{TILE_BYTES},
+                         pipe);
       pipe.producer_commit();
     }
 

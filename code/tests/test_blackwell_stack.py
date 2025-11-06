@@ -136,18 +136,28 @@ def test_cuda_130_features():
     print("\n=== CUDA 13.0 Features Test ===")
     
     # Test stream-ordered memory allocation
+    # Note: Actual implementation would require CUDA kernel code
+    # For now, we verify CUDA 13.0+ is available which supports these features
     try:
-        # This is a placeholder - actual implementation would be in CUDA kernels
-        print(" Stream-ordered memory allocation support available")
+        cuda_version = torch.version.cuda
+        if cuda_version and float(cuda_version.split('.')[0] + '.' + cuda_version.split('.')[1]) >= 13.0:
+            print(" Stream-ordered memory allocation support available (CUDA 13.0+)")
+        else:
+            print(f" Stream-ordered memory requires CUDA 13.0+, found {cuda_version}")
     except Exception as e:
-        print(f" Stream-ordered memory failed: {e}")
+        print(f" Stream-ordered memory check failed: {e}")
     
     # Test TMA (Tensor Memory Accelerator)
+    # Note: Actual implementation would require CUDA kernel code
+    # For now, we verify CUDA 13.0+ is available which supports these features
     try:
-        # This is a placeholder - actual implementation would be in CUDA kernels
-        print(" TMA support available")
+        cuda_version = torch.version.cuda
+        if cuda_version and float(cuda_version.split('.')[0] + '.' + cuda_version.split('.')[1]) >= 13.0:
+            print(" TMA support available (CUDA 13.0+)")
+        else:
+            print(f" TMA requires CUDA 13.0+, found {cuda_version}")
     except Exception as e:
-        print(f" TMA failed: {e}")
+        print(f" TMA check failed: {e}")
 
 def test_profiling_tools():
     """Test profiling tools."""
@@ -373,9 +383,9 @@ def test_kv_cache_batched_attention_2gpu():
         )
     
     if rank == 0:
-        print(" ✓ Batched attention matches full-context forward")
-        print(" ✓ Padding/masking logic validated")
-        print(" ✓ Head sharding across 2 GPUs validated")
+        print(" Batched attention matches full-context forward")
+        print(" Padding/masking logic validated")
+        print(" Head sharding across 2 GPUs validated")
     
     # Cleanup
     for slot in slots:
@@ -471,7 +481,7 @@ def test_inference_server_8gpu_distributed():
         
         assert stats['completed_requests'] > 0, "No requests completed"
         assert stats['total_tokens_generated'] > 0, "No tokens generated"
-        print(" ✓ Distributed inference server validated")
+        print(" Distributed inference server validated")
     
     dist.barrier()
 

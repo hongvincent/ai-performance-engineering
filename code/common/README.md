@@ -6,21 +6,14 @@ Shared utilities for all chapter examples to ensure consistent build system, pro
 
 ```
 common/
-├── build/
-│   └── cuda_common.mk          # Shared Makefile rules
 ├── headers/
-│   ├── cuda_helpers.cuh        # CUDA error checking, timing
-│   ├── profiling_helpers.cuh   # NVTX markers for profiling
 │   ├── arch_detection.cuh      # GPU architecture detection & limits
-│   ├── tma_helpers.cuh         # Tensor Memory Accelerator utilities
-│   └── cuda13_demos.cuh        # CUDA 13.0 feature demos
-├── profiling/
-│   ├── profile_cuda.sh         # Standard CUDA profiling script
-│   ├── profile_pytorch.sh      # PyTorch profiling script
-│   └── compare_results.py      # Compare baseline vs optimized
+│   └── tma_helpers.cuh         # Tensor Memory Accelerator utilities
 └── python/
-    ├── benchmark_utils.py      # Benchmarking utilities
-    └── profiling_utils.py      # PyTorch profiling helpers
+    ├── benchmark_harness.py    # Production-grade benchmarking harness
+    ├── chapter_compare_template.py  # Standard template for chapter compare.py
+    ├── compile_utils.py        # torch.compile and precision utilities
+    └── env_defaults.py         # Environment configuration helpers
 ```
 
 ## Usage
@@ -30,49 +23,13 @@ common/
 In your chapter Makefile:
 
 ```makefile
-# Define your targets
-TARGETS = my_kernel other_kernel
-
-# Include common build rules
-include ../../common/build/cuda_common.mk
-
-# That's it! Common flags and rules are automatically applied
+# Include common architecture flags
+include ../common/cuda_arch.mk
 ```
 
-The common Makefile provides:
-- Dual-architecture builds (sm_100 + sm_121)
-- Consistent compiler flags (-O3, -std=c++17)
-- Common headers included automatically
-- Debug build support: `make DEBUG=1`
+This provides architecture detection and dual-architecture build support (sm_100 + sm_121).
 
 ### CUDA Headers
-
-#### Basic Helpers
-```cpp
-#include "../../common/headers/cuda_helpers.cuh"
-#include "../../common/headers/profiling_helpers.cuh"
-
-int main() {
-    // GPU info
-    printGpuInfo();
-    
-    // Error checking
-    float *d_data;
-    CUDA_CHECK(cudaMalloc(&d_data, size * sizeof(float)));
-    
-    // Timing
-    CudaTimer timer;
-    timer.start();
-    myKernel<<<grid, block>>>(d_data);
-    float ms = timer.stop();
-    
-    // Calculate metrics
-    float bandwidth = calculateBandwidthGBs(bytes, ms);
-    float tflops = calculateGFLOPS(flops, ms);
-    
-    return 0;
-}
-```
 
 #### Architecture Detection
 ```cpp
@@ -126,77 +83,38 @@ int main() {
 }
 ```
 
-#### CUDA 13.0 Demos
-```cpp
-#include "../../common/headers/cuda13_demos.cuh"
+### Python Utilities
 
-int main() {
-    // Run stream-ordered memory allocation demo
-    cuda13_demos::run_stream_ordered_memory_demo();
-    
-    // Run TMA copy demo
-    cuda13_demos::run_simple_tma_demo();
-    
-    return 0;
-}
-```
-
-### Profiling CUDA Examples
-
-```bash
-# From your chapter directory (e.g., ch7/)
-../../common/profiling/profile_cuda.sh ./my_kernel baseline
-../../common/profiling/profile_cuda.sh ./optimized_kernel optimized
-
-# Results saved to ../../results/ch7/
-```
-
-### Profiling PyTorch Examples
-
-```bash
-# From your chapter directory
-../../common/profiling/profile_pytorch.sh ./training.py --batch-size 32
-
-# View Chrome trace in chrome://tracing
-```
-
-### Python Benchmarking
-
+#### Environment Configuration
 ```python
-import sys
-sys.path.append('../../common/python')
-from benchmark_utils import compare_implementations, print_gpu_info
+from common.python.env_defaults import apply_env_defaults, dump_environment_and_capabilities
 
-def baseline():
-    output = model(input)
-    loss = criterion(output, target)
-    loss.backward()
+# Apply default environment settings
+apply_env_defaults()
 
-def optimized():
-    # Your optimized version
-    pass
-
-print_gpu_info()
-compare_implementations(baseline, optimized, "My Optimization")
+# Print environment and hardware capabilities
+dump_environment_and_capabilities()
 ```
 
-### Python Profiling
-
+#### Benchmarking
 ```python
-import sys
-sys.path.append('../../common/python')
-from profiling_utils import ProfilerContext, profile_with_chrome_trace
+from common.python.benchmark_harness import BenchmarkHarness, BenchmarkMode, BenchmarkConfig
+from common.python.chapter_compare_template import discover_benchmarks, load_benchmark
 
-# Method 1: Context manager
-with ProfilerContext("training", trace_dir="./traces"):
-    for batch in dataloader:
-        train_step(batch)
+# Discover and run benchmarks
+harness = BenchmarkHarness()
+benchmarks = discover_benchmarks(chapter_dir)
+for baseline_path, optimized_paths, name in benchmarks:
+    benchmark = load_benchmark(baseline_path, optimized_paths[0])
+    results = harness.benchmark(benchmark)
+```
 
-# Method 2: Single function
-profile_with_chrome_trace(
-    lambda: model(input),
-    trace_path="./forward_pass.json"
-)
+#### Compilation Utilities
+```python
+from common.python.compile_utils import enable_tf32
+
+# Enable TF32 precision
+enable_tf32()
 ```
 
 ## Benefits
@@ -212,17 +130,5 @@ To add new common utilities:
 
 1. Add header files to `headers/`
 2. Add Python modules to `python/`
-3. Add shell scripts to `profiling/`
-4. Update this README with usage examples
-5. Test with at least one chapter before rolling out
-
-## Migration Guide
-
-For existing chapters:
-
-1. Replace custom Makefile with common include
-2. Replace error checking with `CUDA_CHECK()` macro
-3. Add NVTX markers for profiling hot spots
-4. Use common benchmarking utilities in Python examples
-
-See CHAPTER_AUDIT.md for detailed migration status per chapter.
+3. Update this README with usage examples
+4. Test with at least one chapter before rolling out

@@ -234,17 +234,18 @@ __global__ void tma_2d_pipeline_kernel(
 int main() {
     std::printf("=== Blackwell TMA 2D Pipeline ===\n\n");
 
-    bool enable_tma = std::getenv("ENABLE_BLACKWELL_TMA") != nullptr;
+    // Check if device supports TMA (Hopper/Blackwell)
     bool tma_supported = device_supports_tma();
-    if (!tma_supported && enable_tma) {
-        std::printf("⚠️  Device does not support Hopper/Blackwell TMA; falling back to cuda::memcpy_async path.\n");
-        enable_tma = false;
+    bool enable_tma = tma_supported;  // Enable by default if supported
+    
+    if (!tma_supported) {
+        std::printf("ℹ️  Device does not support Hopper/Blackwell TMA; using fallback pipeline.\n");
     }
 
     PFN_cuTensorMapEncodeTiled_v12000 encode = nullptr;
     if (tma_supported) {
         encode = load_cuTensorMapEncodeTiled();
-        if (!encode && enable_tma) {
+        if (!encode) {
             std::printf("⚠️  cuTensorMapEncodeTiled entry point unavailable; falling back.\n");
             enable_tma = false;
         }
@@ -314,8 +315,6 @@ int main() {
                         selected.stages,
                         static_cast<double>(selected.tile_n) * selected.chunk_m * selected.stages * sizeof(float));
         }
-    } else {
-        std::printf("ℹ️  ENABLE_BLACKWELL_TMA not set (or descriptors unavailable); using fallback pipeline.\n");
     }
 
     CUtensorMap in_desc{};
@@ -387,10 +386,52 @@ int main() {
         check_cuda(cudaDeviceSynchronize(), "fallback kernel sync");
     };
 
+    // Warmup
     if (enable_tma) {
         launch_tma();
     } else {
         launch_fallback(fallback_option);
+    }
+    
+    // Benchmark TMA vs fallback
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    
+    const int iterations = 50;
+    
+    // Benchmark TMA path
+    float tma_ms = 0;
+    if (enable_tma) {
+        cudaEventRecord(start);
+        for (int i = 0; i < iterations; ++i) {
+            launch_tma();
+        }
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&tma_ms, start, stop);
+        tma_ms /= iterations;
+    }
+    
+    // Benchmark fallback path
+    float fallback_ms = 0;
+    cudaEventRecord(start);
+    for (int i = 0; i < iterations; ++i) {
+        launch_fallback(fallback_option);
+    }
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&fallback_ms, start, stop);
+    fallback_ms /= iterations;
+    
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    
+    // Calculate speedup (if TMA available)
+    if (enable_tma && tma_ms > 0) {
+        float speedup = fallback_ms / tma_ms;
+        std::printf("Performance: TMA %.2f ms vs fallback %.2f ms\n", tma_ms, fallback_ms);
+        std::printf("Speedup: %.2fx\n", speedup);  // PARSEABLE by game_hooks.py
     }
 
     std::vector<float> h_out(TILE_M * tile_width);

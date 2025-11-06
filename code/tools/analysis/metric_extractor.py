@@ -5,6 +5,7 @@ Extracts performance metrics from test outputs, NCU reports, Nsys reports,
 PyTorch profiler outputs, and benchmark JSON files.
 """
 
+import csv
 import json
 import re
 import subprocess
@@ -154,7 +155,7 @@ def extract_from_benchmark_json(json_path: Path) -> Dict[str, float]:
     Extract metrics from benchmark JSON files.
     
     Args:
-        json_path: Path to BENCHMARK_PEAK_RESULTS_*.json file
+        json_path: Path to benchmark_peak_results_*.json file
     
     Returns:
         Dictionary of extracted metrics
@@ -170,13 +171,43 @@ def extract_from_benchmark_json(json_path: Path) -> Dict[str, float]:
     
     metrics = {}
     
-    # Extract HBM3e bandwidth
-    if "hbm3e" in data:
-        hbm_data = data["hbm3e"]
+    # Extract HBM memory bandwidth (previously hbm3e, now just hbm)
+    if "hbm" in data:
+        hbm_data = data["hbm"]
         if "peak_bandwidth_tbs" in hbm_data:
+            metrics["hbm_bandwidth_tbs"] = hbm_data["peak_bandwidth_tbs"]
+            # Also keep old name for compatibility
             metrics["hbm3e_bandwidth_tbs"] = hbm_data["peak_bandwidth_tbs"]
         if "peak_utilization_percent" in hbm_data:
+            metrics["hbm_utilization_percent"] = hbm_data["peak_utilization_percent"]
             metrics["hbm3e_utilization_percent"] = hbm_data["peak_utilization_percent"]
+    elif "hbm3e" in data:
+        # Handle legacy hbm3e key
+        hbm_data = data["hbm3e"]
+        if "peak_bandwidth_tbs" in hbm_data:
+            metrics["hbm_bandwidth_tbs"] = hbm_data["peak_bandwidth_tbs"]
+            metrics["hbm3e_bandwidth_tbs"] = hbm_data["peak_bandwidth_tbs"]
+        if "peak_utilization_percent" in hbm_data:
+            metrics["hbm_utilization_percent"] = hbm_data["peak_utilization_percent"]
+            metrics["hbm3e_utilization_percent"] = hbm_data["peak_utilization_percent"]
+    
+    # Extract FP4 compute
+    if "fp4_compute" in data:
+        fp4_data = data["fp4_compute"]
+        if "peak_tflops" in fp4_data:
+            metrics["fp4_compute_tflops"] = fp4_data["peak_tflops"]
+    
+    # Extract FP6 compute
+    if "fp6_compute" in data:
+        fp6_data = data["fp6_compute"]
+        if "peak_tflops" in fp6_data:
+            metrics["fp6_compute_tflops"] = fp6_data["peak_tflops"]
+    
+    # Extract FP8 compute
+    if "fp8_compute" in data:
+        fp8_data = data["fp8_compute"]
+        if "peak_tflops" in fp8_data:
+            metrics["fp8_compute_tflops"] = fp8_data["peak_tflops"]
     
     # Extract FP16 compute
     if "fp16_compute" in data:
@@ -189,6 +220,41 @@ def extract_from_benchmark_json(json_path: Path) -> Dict[str, float]:
         compile_data = data["torch_compile"]
         if "speedup" in compile_data:
             metrics["torch_compile_speedup"] = compile_data["speedup"]
+    
+    # Extract L2 cache bandwidth
+    if "l2_cache" in data:
+        l2_data = data["l2_cache"]
+        if "peak_bandwidth_gbs" in l2_data:
+            metrics["l2_cache_bandwidth_gbs"] = l2_data["peak_bandwidth_gbs"]
+        if "l2_cache_size_mb" in l2_data:
+            metrics["l2_cache_size_mb"] = l2_data["l2_cache_size_mb"]
+    
+    # Extract shared memory info
+    if "shared_memory" in data:
+        sm_data = data["shared_memory"]
+        if "shared_memory_per_sm_kb" in sm_data:
+            metrics["shared_memory_per_sm_kb"] = sm_data["shared_memory_per_sm_kb"]
+        if "total_shared_memory_mb" in sm_data:
+            metrics["total_shared_memory_mb"] = sm_data["total_shared_memory_mb"]
+    
+    # Extract NVLink bandwidth
+    if "nvlink" in data:
+        nvlink_data = data["nvlink"]
+        if "peak_bandwidth_gbs" in nvlink_data:
+            metrics["nvlink_bandwidth_gbs"] = nvlink_data["peak_bandwidth_gbs"]
+        if "gpu_count" in nvlink_data:
+            metrics["nvlink_gpu_count"] = nvlink_data["gpu_count"]
+    
+    # Extract GPU hardware info
+    if "gpu_hardware" in data:
+        hw_data = data["gpu_hardware"]
+        # Store key hardware characteristics
+        if "num_sms" in hw_data:
+            metrics["gpu_num_sms"] = hw_data["num_sms"]
+        if "l2_cache_size_kb" in hw_data:
+            metrics["gpu_l2_cache_size_kb"] = hw_data["l2_cache_size_kb"]
+        if "max_threads_per_block" in hw_data:
+            metrics["gpu_max_threads_per_block"] = hw_data["max_threads_per_block"]
     
     return metrics
 
@@ -398,10 +464,15 @@ def discover_and_extract_all(directory: Path) -> Dict[str, Any]:
             metrics = extract_from_test_output(txt_file)
             results["test_outputs"][txt_file.name] = metrics
     
-    # Extract from benchmark JSON
-    for json_file in directory.glob("BENCHMARK_PEAK_RESULTS_*.json"):
+    # Extract from benchmark JSON (support both lowercase and uppercase patterns)
+    for json_file in directory.glob("benchmark_peak_results_*.json"):
         metrics = extract_from_benchmark_json(json_file)
         results["benchmark"][json_file.name] = metrics
+    # Also check for old uppercase pattern for backwards compatibility
+    for json_file in directory.glob("BENCHMARK_PEAK_RESULTS_*.json"):
+        if json_file.name not in results["benchmark"]:
+            metrics = extract_from_benchmark_json(json_file)
+            results["benchmark"][json_file.name] = metrics
     
     # Extract from NCU reports
     for ncu_file in directory.rglob("*.ncu-rep"):
@@ -412,11 +483,34 @@ def discover_and_extract_all(directory: Path) -> Dict[str, Any]:
     for nsys_file in directory.rglob("*.nsys-rep"):
         metrics = extract_from_nsys_report(nsys_file)
         results["nsys"][nsys_file.name] = metrics
-    
+
     for sqlite_file in directory.rglob("*.sqlite"):
         if "nsys" in sqlite_file.name or "nsight" in sqlite_file.name.lower():
             metrics = extract_from_nsys_report(sqlite_file)
             results["nsys"][sqlite_file.name] = metrics
+
+    # Include pre-extracted Nsight Systems metrics from harness CSV if present
+    csv_path = directory / "nsys_metrics.csv"
+    if csv_path.exists():
+        try:
+            with csv_path.open() as fh:
+                reader = csv.DictReader(fh)
+                csv_metrics = {}
+                for row in reader:
+                    metric_name = row.get("metric")
+                    value = row.get("value")
+                    section = row.get("section", "")
+                    if not metric_name or value is None:
+                        continue
+                    key = f"{section}:{metric_name}" if section else metric_name
+                    try:
+                        csv_metrics[key] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                if csv_metrics:
+                    results["nsys"][csv_path.name] = csv_metrics
+        except Exception:
+            pass
     
     # Extract from PyTorch profiler outputs
     for pytorch_dir in directory.rglob("pytorch*"):

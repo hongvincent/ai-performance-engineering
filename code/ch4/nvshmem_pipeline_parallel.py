@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Pipeline Parallelism with NVSHMEM for 8x B200
 ==============================================
@@ -61,14 +71,9 @@ When NOT to Use:
 """
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -79,6 +84,23 @@ except ImportError:
             os.environ.setdefault("MASTER_ADDR", "localhost")
             os.environ.setdefault("MASTER_PORT", "29500")
             os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+
+try:
+    from gpu_requirements import require_min_gpus, warn_optimal_gpu_count
+except ImportError:
+    def require_min_gpus(min_gpus, script_name=None):
+        import sys as _sys
+        import torch as _torch
+        if _torch.cuda.device_count() < min_gpus:
+            print(
+                f"ERROR: This script requires {min_gpus} GPUs but only "
+                f"{_torch.cuda.device_count()} available",
+                file=_sys.stderr,
+            )
+            _sys.exit(1)
+
+    def warn_optimal_gpu_count(optimal_gpus, script_name=None):
+        pass  # Graceful fallback if gpu_requirements is unavailable
 
 
 import argparse
@@ -106,19 +128,33 @@ def symmetric_memory_available() -> bool:
 
 def init_distributed() -> Tuple[int, int, int]:
     """Initialize distributed process group."""
+    gpu_count = torch.cuda.device_count()
+    # Require at least 2 GPUs for pipeline parallel schedule
+    if gpu_count < 2:
+        require_min_gpus(2, script_name="nvshmem_pipeline_parallel.py")
+
+    setup_single_gpu_env()
+
+    rank = int(os.environ.get("RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", max(1, gpu_count)))
+    local_rank = int(os.environ.get("LOCAL_RANK", rank % max(1, gpu_count)))
+
     if not dist.is_initialized():
-        rank = int(os.environ.get("RANK", 0))
-        world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-        local_rank = int(os.environ.get("LOCAL_RANK", rank))
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    dist.init_process_group(
+        dist.init_process_group(
             backend="nccl",
             init_method="env://",
             rank=rank,
             world_size=world_size,
             timeout=datetime.timedelta(seconds=60),
         )
+
+    if local_rank >= gpu_count:
+        raise RuntimeError(
+            f"LOCAL_RANK {local_rank} is out of range for available GPUs ({gpu_count})."
+        )
+
     torch.cuda.set_device(local_rank)
+    warn_optimal_gpu_count(8, script_name="nvshmem_pipeline_parallel.py")
     return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 
 

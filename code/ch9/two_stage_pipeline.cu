@@ -37,12 +37,12 @@ void stage_ab_tiles(const float* __restrict__ globalA,
     cuda::memcpy_async(block,
                        A0,
                        globalA,
-                       cuda::aligned_size_t<16>(tile_elems * sizeof(float)),
+                       cuda::aligned_size_t<32>(tile_elems * sizeof(float)),
                        pipe);
     cuda::memcpy_async(block,
                        B0,
                        globalB,
-                       cuda::aligned_size_t<16>(tile_elems * sizeof(float)),
+                       cuda::aligned_size_t<32>(tile_elems * sizeof(float)),
                        pipe);
     pipe.producer_commit();
 
@@ -66,12 +66,12 @@ void stage_ab_tiles(const float* __restrict__ globalA,
             cuda::memcpy_async(block,
                                a_next,
                                globalA + (tile + 1) * tile_elems,
-                               cuda::aligned_size_t<16>(tile_elems * sizeof(float)),
+                               cuda::aligned_size_t<32>(tile_elems * sizeof(float)),
                                pipe);
             cuda::memcpy_async(block,
                                b_next,
                                globalB + (tile + 1) * tile_elems,
-                               cuda::aligned_size_t<16>(tile_elems * sizeof(float)),
+                               cuda::aligned_size_t<32>(tile_elems * sizeof(float)),
                                pipe);
             pipe.producer_commit();
         }
@@ -106,6 +106,12 @@ int main() {
     dim3 grid(1);
     dim3 block(THREADS);
     size_t shared_bytes = 4 * TILE_ELEMS * sizeof(float);
+    check(cudaFuncSetAttribute(stage_ab_tiles,
+                               cudaFuncAttributeMaxDynamicSharedMemorySize,
+                               static_cast<int>(shared_bytes)));
+    check(cudaFuncSetAttribute(stage_ab_tiles,
+                               cudaFuncAttributePreferredSharedMemoryCarveout,
+                               100));
     stage_ab_tiles<<<grid, block, shared_bytes>>>(dA, dB, dC, TILE_ELEMS, tiles);
     check(cudaDeviceSynchronize());
 

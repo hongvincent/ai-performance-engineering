@@ -28,7 +28,7 @@ from metrics_config import (
     resolve_overrides,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
 DEFAULT_TIMEOUT = 900  # seconds
 
@@ -63,6 +63,7 @@ class RunResult:
     exit_code: int
     skipped: bool
     skip_reason: Optional[str] = None
+    metrics_path: Optional[Path] = None  # Path to extracted metrics file (CSV, JSON, etc.)
 
 
 def unique_preserve(items: Iterable[str]) -> List[str]:
@@ -349,7 +350,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=REPO_ROOT / "profiles",
+        default=REPO_ROOT / "output",
         help="Root directory for profiler outputs",
     )
     parser.add_argument(
@@ -489,7 +490,7 @@ def base_env(example: Example) -> Dict[str, str]:
     _prepend_unique("PATH", CUDA_BIN_DIRS)
     _prepend_unique("LD_LIBRARY_PATH", CUDA_LIB_DIRS)
 
-    tmp_dir = Path(env.get("TMPDIR", REPO_ROOT / "code" / "profiles" / "tmp"))
+    tmp_dir = Path(env.get("TMPDIR", REPO_ROOT / "output" / "tmp"))
     tmp_dir.mkdir(parents=True, exist_ok=True)
     env["TMPDIR"] = str(tmp_dir)
 
@@ -508,6 +509,8 @@ def base_env(example: Example) -> Dict[str, str]:
     if chapter_tags.intersection(example.tags):
         env.setdefault("TORCHINDUCTOR_AUTOTUNE", "0")
         env.setdefault("TORCH_COMPILE_DISABLE", "1")
+    # Always enable Python fault handler for stack traces on crashes
+    env.setdefault("PYTHONFAULTHANDLER", "1")
     return env
 
 
@@ -563,6 +566,61 @@ def check_preconditions(example: Example, profiler: str) -> Optional[str]:
 
 def profiler_output_dir(session_dir: Path, profiler: str, example: Example) -> Path:
     return session_dir / profiler / example.name
+
+
+def extract_nsys_metrics(nsys_rep_path: Path, output_csv: Path) -> bool:
+    """Extract metrics from a .nsys-rep file and append to CSV.
+    
+    Returns True if extraction succeeded, False otherwise.
+    """
+    if not nsys_rep_path.exists():
+        return False
+    
+    try:
+        # Import extraction functions (add REPO_ROOT to path for import)
+        import sys
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from tools.profiling.extract_nsys_summary import harvest
+        
+        # Extract metrics from this file
+        metrics = harvest(nsys_rep_path)
+        if not metrics:
+            log_progress("extract", "nsys", nsys_rep_path.name, "no-metrics")
+            return False
+        
+        # Prepare CSV data
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        tag = nsys_rep_path.stem
+        
+        # Read existing CSV if it exists, otherwise create new
+        existing_rows = []
+        if output_csv.exists():
+            import csv
+            with output_csv.open("r", newline="") as fh:
+                reader = csv.DictReader(fh)
+                existing_rows = list(reader)
+        
+        # Append new metrics
+        new_rows = []
+        for entry in metrics:
+            record = {"tag": tag, "section": entry.get("section", ""), 
+                     "metric": entry.get("metric", ""), "value": entry.get("value", "")}
+            new_rows.append(record)
+        
+        # Write combined CSV
+        import csv
+        with output_csv.open("w", newline="") as fh:
+            fieldnames = ["tag", "section", "metric", "value"]
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(existing_rows + new_rows)
+        
+        log_progress("extract", "nsys", nsys_rep_path.name, "ok", f"{len(new_rows)} metrics")
+        return True
+    except Exception as exc:
+        log_progress("extract", "nsys", nsys_rep_path.name, "failed", str(exc))
+        return False
 
 
 def run_nsys(
@@ -624,6 +682,14 @@ def run_nsys(
             f"duration={duration:.2f}s",
         )
 
+    # Automatically extract metrics from .nsys-rep file (before creating result)
+    metrics_path = None
+    if not context.dry_run and exit_code == 0:
+        nsys_rep_path = Path(f"{out_base}.nsys-rep")
+        session_metrics_csv = session_dir / "nsys_metrics.csv"
+        if extract_nsys_metrics(nsys_rep_path, session_metrics_csv):
+            metrics_path = session_metrics_csv
+    
     result = RunResult(
         profiler="nsys",
         example=example,
@@ -635,9 +701,11 @@ def run_nsys(
         exit_code=exit_code,
         skipped=context.dry_run,
         skip_reason="dry-run" if context.dry_run else None,
+        metrics_path=metrics_path,
     )
     if not context.dry_run:
         write_status(out_dir, exit_code=exit_code, duration=duration)
+    
     return result
 
 
@@ -704,6 +772,7 @@ def run_ncu(
         exit_code=exit_code,
         skipped=context.dry_run,
         skip_reason="dry-run" if context.dry_run else None,
+        metrics_path=None,  # NCU metrics extraction can be added later if needed
     )
     if not context.dry_run:
         write_status(out_dir, exit_code=exit_code, duration=duration)
@@ -780,6 +849,7 @@ def run_pytorch_profiler(
                 exit_code=exit_code,
                 skipped=context.dry_run,
                 skip_reason="dry-run" if context.dry_run else None,
+                metrics_path=None,  # PyTorch profiler metrics extraction can be added later if needed
             )
         )
         if not context.dry_run:
@@ -787,26 +857,283 @@ def run_pytorch_profiler(
     return results
 
 
+def generate_baseline_optimized_comparison(results: List[RunResult], session_dir: Path) -> Optional[str]:
+    """Generate markdown comparison table for baseline vs optimized examples.
+    
+    Returns markdown string if comparisons found, None otherwise.
+    """
+    import csv
+    from collections import defaultdict
+    
+    # Group results by example name (extract base name)
+    baseline_results = {}
+    optimized_results = {}
+    
+    for result in results:
+        if result.skipped or result.exit_code != 0:
+            continue
+        
+        example_name = result.example.name
+        example_path = str(result.example.path).lower() if result.example.path else ""
+        
+        # Check if it's a baseline or optimized example (check both name and path)
+        is_baseline = (
+            example_name.startswith("baseline_") 
+            or "_baseline_" in example_name.lower()
+            or "/baseline_" in example_path
+            or "baseline_" in example_path.split("/")[-1] if "/" in example_path else False
+        )
+        is_optimized = (
+            example_name.startswith("optimized_") 
+            or "_optimized_" in example_name.lower()
+            or "/optimized_" in example_path
+            or "optimized_" in example_path.split("/")[-1] if "/" in example_path else False
+        )
+        
+        if is_baseline:
+            # Extract base name from name or path
+            base_name = None
+            if example_name.startswith("baseline_") or "_baseline_" in example_name.lower():
+                base_name = example_name.replace("baseline_", "").replace("_baseline", "").replace("baseline_", "")
+            elif "/baseline_" in example_path:
+                # Extract from path: ch4/baseline_dataparallel.py -> dataparallel
+                file_part = example_path.split("/baseline_")[-1].replace(".py", "")
+                base_name = file_part.split("_")[0] if "_" in file_part else file_part
+            
+            if base_name:
+                # Remove chapter prefix if present (ch4_dataparallel -> dataparallel)
+                if base_name.startswith("ch") and "_" in base_name:
+                    base_name = "_".join(base_name.split("_")[1:])
+                baseline_results[base_name] = result
+        
+        if is_optimized:
+            # Extract base name from name or path
+            base_name = None
+            if example_name.startswith("optimized_") or "_optimized_" in example_name.lower():
+                base_name = example_name.replace("optimized_", "").replace("_optimized", "").replace("optimized_", "")
+            elif "/optimized_" in example_path:
+                # Extract from path: ch4/optimized_dataparallel_ddp.py -> dataparallel
+                file_part = example_path.split("/optimized_")[-1].replace(".py", "")
+                # Take first part before underscore (or whole if no underscore)
+                base_name = file_part.split("_")[0] if "_" in file_part and not file_part.startswith("ch") else file_part
+            
+            if base_name:
+                # Remove chapter prefix if present
+                if base_name.startswith("ch") and "_" in base_name:
+                    base_name = "_".join(base_name.split("_")[1:])
+                optimized_results[base_name] = result
+    
+    # Find matching pairs
+    all_base_names = set(baseline_results.keys()) & set(optimized_results.keys())
+    
+    if not all_base_names:
+        return None
+    
+    # Load metrics from nsys_metrics.csv (tagged by example name)
+    nsys_metrics_csv = session_dir / "nsys_metrics.csv"
+    metrics_by_example = defaultdict(dict)
+    
+    if nsys_metrics_csv.exists():
+        with nsys_metrics_csv.open("r") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                tag = row.get("tag", "")
+                section = row.get("section", "")
+                metric = row.get("metric", "")
+                value = row.get("value", "")
+                if tag and metric and value:
+                    # Extract example name from tag (e.g., "nsys_baseline_dataparallel" -> "baseline_dataparallel")
+                    tag_clean = tag.replace("nsys_", "")
+                    key = f"{section}::{metric}" if section else metric
+                    metrics_by_example[tag_clean][key] = value
+    
+    # Also try to load from metrics_summary.json flattened metrics
+    metrics_summary_path = session_dir / "metrics_summary.json"
+    if metrics_summary_path.exists():
+        try:
+            metrics_data = json.loads(metrics_summary_path.read_text())
+            # Map metrics from by_source to examples
+            for source_type, sources in metrics_data.get("by_source", {}).items():
+                for source_name, metrics in sources.items():
+                    # Try to extract example name from source_name
+                    # e.g., "nsys_baseline_dataparallel.nsys-rep" -> "baseline_dataparallel"
+                    example_match = None
+                    for base_name in all_base_names:
+                        if f"baseline_{base_name}" in source_name.lower():
+                            example_match = f"baseline_{base_name}"
+                            break
+                        elif f"optimized_{base_name}" in source_name.lower():
+                            example_match = f"optimized_{base_name}"
+                            break
+                    
+                    if example_match and metrics:
+                        for metric_name, metric_value in metrics.items():
+                            if isinstance(metric_value, (int, float)):
+                                metrics_by_example[example_match][metric_name] = str(metric_value)
+        except Exception:
+            pass  # Fallback to CSV if JSON parsing fails
+    
+    # Build comparison table
+    markdown_lines = []
+    markdown_lines.append("\n" + "=" * 100)
+    markdown_lines.append("# Baseline vs Optimized Comparison")
+    markdown_lines.append("=" * 100)
+    markdown_lines.append("")
+    
+    for base_name in sorted(all_base_names):
+        baseline_result = baseline_results[base_name]
+        optimized_result = optimized_results[base_name]
+        
+        baseline_example_name = baseline_result.example.name
+        optimized_example_name = optimized_result.example.name
+        
+        baseline_metrics = metrics_by_example.get(baseline_example_name, {})
+        optimized_metrics = metrics_by_example.get(optimized_example_name, {})
+        
+        # Collect all unique metrics
+        all_metrics = set(baseline_metrics.keys()) | set(optimized_metrics.keys())
+        
+        # Always include duration from RunResult
+        baseline_duration = baseline_result.duration
+        optimized_duration = optimized_result.duration
+        duration_speedup = baseline_duration / optimized_duration if optimized_duration > 0 else 1.0
+        duration_improvement = (1.0 - (optimized_duration / baseline_duration)) * 100 if baseline_duration > 0 else 0.0
+        
+        markdown_lines.append(f"## {base_name}")
+        markdown_lines.append("")
+        markdown_lines.append(f"**Baseline:** `{baseline_example_name}`  |  **Optimized:** `{optimized_example_name}`")
+        markdown_lines.append("")
+        markdown_lines.append("| Metric | Baseline | Optimized | Improvement |")
+        markdown_lines.append("|--------|----------|-----------|-------------|")
+        
+        # Add duration as first row
+        markdown_lines.append(f"| Duration (s) | {baseline_duration:.3f} | {optimized_duration:.3f} | {duration_improvement:+.1f}% ({duration_speedup:.2f}x faster) |")
+        
+        if not all_metrics:
+            markdown_lines.append("")
+            markdown_lines.append("*No detailed metrics found. Duration comparison only.*")
+            markdown_lines.append("")
+            continue
+        
+        # Compare each metric
+        for metric_key in sorted(all_metrics):
+            baseline_val_str = baseline_metrics.get(metric_key, "N/A")
+            optimized_val_str = optimized_metrics.get(metric_key, "N/A")
+            
+            if baseline_val_str == "N/A" and optimized_val_str == "N/A":
+                continue
+            
+            # Try to parse numeric values
+            try:
+                # Clean the string values
+                baseline_clean = str(baseline_val_str).replace(",", "").replace(" ms", "").replace(" GB", "").replace("%", "").replace(" TB", "").strip()
+                optimized_clean = str(optimized_val_str).replace(",", "").replace(" ms", "").replace(" GB", "").replace("%", "").replace(" TB", "").strip()
+                
+                baseline_val = float(baseline_clean)
+                optimized_val = float(optimized_clean)
+                
+                # Calculate improvement
+                # For time/duration/latency metrics: lower is better
+                # For throughput/bandwidth/utilization metrics: higher is better
+                metric_lower = metric_key.lower()
+                is_time_metric = any(term in metric_lower for term in ["time", "duration", "latency", "ms", "us", "ns"])
+                
+                if is_time_metric:
+                    # Lower is better
+                    improvement = ((baseline_val - optimized_val) / baseline_val * 100) if baseline_val > 0 else 0.0
+                    speedup = baseline_val / optimized_val if optimized_val > 0 else 1.0
+                    improvement_str = f"{improvement:+.1f}% ({speedup:.2f}x faster)"
+                else:
+                    # Higher is better (throughput, bandwidth, utilization, etc.)
+                    improvement = ((optimized_val - baseline_val) / baseline_val * 100) if baseline_val > 0 else 0.0
+                    speedup = optimized_val / baseline_val if baseline_val > 0 else 1.0
+                    improvement_str = f"{improvement:+.1f}% ({speedup:.2f}x higher)"
+                
+                markdown_lines.append(f"| {metric_key} | {baseline_val_str} | {optimized_val_str} | {improvement_str} |")
+            except (ValueError, AttributeError):
+                # Non-numeric comparison
+                if baseline_val_str == optimized_val_str:
+                    markdown_lines.append(f"| {metric_key} | {baseline_val_str} | {optimized_val_str} | Same |")
+                else:
+                    markdown_lines.append(f"| {metric_key} | {baseline_val_str} | {optimized_val_str} | Changed |")
+        
+        markdown_lines.append("")
+    
+    markdown_lines.append("=" * 100)
+    markdown_lines.append("")
+    
+    return "\n".join(markdown_lines)
+
+
 def summarize(results: List[RunResult], session_dir: Path) -> None:
     summary = []
     failures: List[RunResult] = []
     for result in results:
-        summary.append(
-            {
-                "profiler": result.profiler,
-                "example": result.example.name,
-                "exit_code": result.exit_code,
-                "duration_seconds": result.duration,
-                "command": result.command,
-                "stdout": str(result.stdout_path),
-                "stderr": str(result.stderr_path),
-                "skipped": result.skipped,
-                "skip_reason": result.skip_reason,
-            }
-        )
+        entry = {
+            "profiler": result.profiler,
+            "example": result.example.name,
+            "exit_code": result.exit_code,
+            "duration_seconds": result.duration,
+            "command": result.command,
+            "stdout": str(result.stdout_path),
+            "stderr": str(result.stderr_path),
+            "skipped": result.skipped,
+            "skip_reason": result.skip_reason,
+        }
+        # Include metrics path if available
+        if result.metrics_path:
+            entry["metrics_path"] = str(result.metrics_path)
+            # For nsys, include relative path to .nsys-rep file for metric_extractor discovery
+            if result.profiler == "nsys":
+                nsys_rep = result.output_dir / f"nsys_{result.example.name}.nsys-rep"
+                if nsys_rep.exists():
+                    entry["nsys_rep_path"] = str(nsys_rep)
+        summary.append(entry)
         if not result.skipped and result.exit_code != 0:
             failures.append(result)
     (session_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    
+    # Aggregate all metrics using unified metric extractor
+    try:
+        # REPO_ROOT is scripts/, need code/ for tools import
+        code_root = REPO_ROOT.parent if REPO_ROOT.name == "scripts" else REPO_ROOT
+        if str(code_root) not in sys.path:
+            sys.path.insert(0, str(code_root))
+        from tools.analysis.metric_extractor import discover_and_extract_all, flatten_metrics
+        
+        all_metrics = discover_and_extract_all(session_dir)
+        flattened = flatten_metrics(all_metrics)
+        
+        if flattened:
+            metrics_summary_path = session_dir / "metrics_summary.json"
+            metrics_summary_path.write_text(json.dumps({
+                "session_dir": str(session_dir),
+                "by_source": all_metrics,
+                "flattened": flattened,
+                "extraction_timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }, indent=2))
+            log_progress("session", str(session_dir), "metrics-aggregated", f"{len(flattened)} total metrics from all profilers")
+        
+        # Log nsys-specific metrics CSV status
+        nsys_metrics_csv = session_dir / "nsys_metrics.csv"
+        if nsys_metrics_csv.exists():
+            import csv
+            with nsys_metrics_csv.open("r") as fh:
+                reader = csv.DictReader(fh)
+                metric_count = sum(1 for _ in reader)
+            log_progress("session", str(session_dir), "nsys-metrics", f"{metric_count} nsys metrics in CSV")
+        
+        # Generate baseline vs optimized comparison
+        comparison_md = generate_baseline_optimized_comparison(results, session_dir)
+        if comparison_md:
+            comparison_path = session_dir / "baseline_optimized_comparison.md"
+            comparison_path.write_text(comparison_md)
+            log_progress("session", str(session_dir), "comparison-generated", comparison_path.name)
+            # Also print to stdout for immediate visibility
+            print("\n" + comparison_md)
+    except Exception as exc:
+        # Don't fail the whole run if metrics aggregation fails
+        log_progress("session", str(session_dir), "metrics-aggregation-warning", str(exc))
     try:
         latest_summary = REPO_ROOT / "profile_runs" / "harness" / "latest_summary.json"
         latest_failures = REPO_ROOT / "profile_runs" / "harness" / "latest_failures.txt"

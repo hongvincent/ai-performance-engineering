@@ -37,14 +37,14 @@ def main() -> int:
 
         print(f"Device {ordinal}: {name}")
         if managed:
-            print("  ✓ Managed memory supported.")
+            print("  Managed memory supported.")
         else:
             print("  ✗ Managed memory allocation not supported.")
             failures.append(ordinal)
 
-        print(f"  {'✓' if pageable else '✗'} Coherent access to pageable memory")
-        print(f"  {'✓' if concurrent else '✗'} Concurrent managed access (GPU/CPU overlap)")
-        print(f"  {'✓' if direct_host else '✗'} Direct host access to managed memory")
+        print(f"  {'' if pageable else '✗'} Coherent access to pageable memory")
+        print(f"  {'' if concurrent else '✗'} Concurrent managed access (GPU/CPU overlap)")
+        print(f"  {'' if direct_host else '✗'} Direct host access to managed memory")
         print()
 
     if failures:

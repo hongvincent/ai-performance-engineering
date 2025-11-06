@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
+
 """Simple wrapper that invokes the FlexDecoding example used in the book."""
 
 import argparse
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 
@@ -31,3 +31,10 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+

@@ -1,4 +1,5 @@
-// flashmla_kernel.cu -- minimal FlashMLA decode sketch for CUDA 13.0 (sm_100)
+// Book sample (Chapter 18): illustrative FlashMLA-like decode sketch for Blackwell (sm_120).
+// For production use FlashMLA/ThunderMLA or PyTorch FlexDecoding kernels; error handling omitted.
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>

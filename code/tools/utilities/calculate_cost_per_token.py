@@ -167,11 +167,11 @@ def generate_cost_report(
     lines.append("")
     
     if cost_ratio < 0.1:
-        lines.append("✅ **Excellent**: Energy costs are minimal compared to API pricing\n")
+        lines.append("[OK] **Excellent**: Energy costs are minimal compared to API pricing\n")
     elif cost_ratio < 0.5:
-        lines.append("✅ **Good**: Energy costs are low, plenty of margin for hardware amortization\n")
+        lines.append("[OK] **Good**: Energy costs are low, plenty of margin for hardware amortization\n")
     elif cost_ratio < 1.0:
-        lines.append("⚠️ **Moderate**: Energy costs are significant but below API pricing\n")
+        lines.append("WARNING: **Moderate**: Energy costs are significant but below API pricing\n")
     else:
         lines.append("🚨 **High**: Energy costs exceed typical API pricing - check efficiency\n")
     
@@ -203,17 +203,17 @@ def generate_cost_report(
     lines.append("")
     
     if metrics['energy_per_token_joules'] > 10:
-        lines.append("1. ⚠️ High energy per token - consider:\n")
+        lines.append("1. WARNING: High energy per token - consider:\n")
         lines.append("   - Batch size optimization\n")
         lines.append("   - Model quantization (FP8)\n")
         lines.append("   - Better GPU utilization\n")
     else:
-        lines.append("1. ✅ Energy efficiency looks good\n")
+        lines.append("1. [OK] Energy efficiency looks good\n")
     
     if metrics['pue'] > 1.5:
-        lines.append(f"2. ⚠️ PUE of {metrics['pue']} is high - datacenter efficiency could be improved\n")
+        lines.append(f"2. WARNING: PUE of {metrics['pue']} is high - datacenter efficiency could be improved\n")
     else:
-        lines.append(f"2. ✅ PUE of {metrics['pue']} is reasonable\n")
+        lines.append(f"2. [OK] PUE of {metrics['pue']} is reasonable\n")
     
     lines.append("")
     

@@ -78,13 +78,10 @@ class PerformanceReport:
         
         self.metrics_by_chapter[chapter] = results
     
-    def generate_markdown(self, quick: bool = False) -> str:
+    def generate_markdown(self) -> str:
         """
         Generate markdown report.
-        
-        Args:
-            quick: If True, generate condensed summary only
-        
+
         Returns:
             Markdown formatted report
         """
@@ -102,108 +99,75 @@ class PerformanceReport:
         lines.append("")
         stats = self.summary_stats
         lines.append(f"- **Total metrics analyzed:** {stats['total_metrics']}")
-        lines.append(f"- **PASS:** {stats['pass_count']} ✅")
-        lines.append(f"- **WARN:** {stats['warn_count']} ⚠️")
-        lines.append(f"- **FAIL:** {stats['fail_count']} ❌")
+        lines.append(f"- **PASS:** {stats['pass_count']} [OK]")
+        lines.append(f"- **WARN:** {stats['warn_count']} WARNING:")
+        lines.append(f"- **FAIL:** {stats['fail_count']} ERROR:")
         lines.append(f"- **MISSING:** {stats['missing_count']} ❓")
         lines.append("")
         
-        if quick:
-            # Quick mode: just show summary table
-            lines.append("## Quick Summary by Chapter")
-            lines.append("")
-            lines.append("| Chapter | Description | Status | Metrics |")
-            lines.append("|---------|-------------|--------|---------|")
+        # Detailed breakdown per chapter
+        lines.append("## Detailed Results by Chapter")
+        lines.append("")
+        
+        for chapter in sorted(self.chapters_analyzed):
+            desc = get_chapter_description(chapter)
+            results = self.metrics_by_chapter.get(chapter, {})
             
-            for chapter in sorted(self.chapters_analyzed):
-                desc = get_chapter_description(chapter)
-                results = self.metrics_by_chapter.get(chapter, {})
+            if not results:
+                continue
+            
+            lines.append(f"### {chapter.upper()}: {desc}")
+            lines.append("")
+            
+            # Count statuses for chapter summary
+            statuses = [r["status"] for r in results.values()]
+            fail_c = statuses.count("FAIL")
+            warn_c = statuses.count("WARN")
+            pass_c = statuses.count("PASS")
+            
+            if fail_c > 0:
+                lines.append("**Overall Status:** ERROR: FAIL")
+            elif warn_c > 0:
+                lines.append("**Overall Status:** WARNING: WARN")
+            else:
+                lines.append("**Overall Status:** [OK] PASS")
+            lines.append("")
+            
+            # Metrics table
+            lines.append("| Metric | Target | Actual | Status |")
+            lines.append("|--------|--------|--------|--------|")
+            
+            for metric_name, result in sorted(results.items()):
+                target_def = result["target"]
+                actual = result["actual"]
+                status = result["status"]
                 
-                # Count statuses
-                statuses = [r["status"] for r in results.values()]
-                pass_c = statuses.count("PASS")
-                warn_c = statuses.count("WARN")
-                fail_c = statuses.count("FAIL")
-                missing_c = statuses.count("MISSING")
+                # Format target
+                target_str = format_value(target_def["target"], target_def["unit"])
                 
-                # Overall chapter status
-                if fail_c > 0:
-                    status_icon = "❌ FAIL"
-                elif warn_c > 0:
-                    status_icon = "⚠️ WARN"
-                elif pass_c > 0:
-                    status_icon = "✅ PASS"
+                # Format actual
+                if actual is not None:
+                    actual_str = format_value(actual, target_def["unit"])
                 else:
-                    status_icon = "❓ NO DATA"
+                    actual_str = "N/A"
                 
-                metrics_summary = f"{pass_c}✅ {warn_c}⚠️ {fail_c}❌ {missing_c}❓"
-                lines.append(f"| {chapter.upper()} | {desc} | {status_icon} | {metrics_summary} |")
+                # Status icon
+                status_icon = {
+                    "PASS": "[OK] PASS",
+                    "WARN": "WARNING: WARN",
+                    "FAIL": "ERROR: FAIL",
+                    "MISSING": "❓ MISSING",
+                }.get(status, status)
+                
+                # Format metric name
+                metric_display = metric_name.replace("_", " ").title()
+                
+                lines.append(f"| {metric_display} | {target_str} | {actual_str} | {status_icon} |")
             
             lines.append("")
-        else:
-            # Full mode: detailed breakdown per chapter
-            lines.append("## Detailed Results by Chapter")
-            lines.append("")
-            
-            for chapter in sorted(self.chapters_analyzed):
-                desc = get_chapter_description(chapter)
-                results = self.metrics_by_chapter.get(chapter, {})
-                
-                if not results:
-                    continue
-                
-                lines.append(f"### {chapter.upper()}: {desc}")
-                lines.append("")
-                
-                # Count statuses for chapter summary
-                statuses = [r["status"] for r in results.values()]
-                fail_c = statuses.count("FAIL")
-                warn_c = statuses.count("WARN")
-                pass_c = statuses.count("PASS")
-                
-                if fail_c > 0:
-                    lines.append("**Overall Status:** ❌ FAIL")
-                elif warn_c > 0:
-                    lines.append("**Overall Status:** ⚠️ WARN")
-                else:
-                    lines.append("**Overall Status:** ✅ PASS")
-                lines.append("")
-                
-                # Metrics table
-                lines.append("| Metric | Target | Actual | Status |")
-                lines.append("|--------|--------|--------|--------|")
-                
-                for metric_name, result in sorted(results.items()):
-                    target_def = result["target"]
-                    actual = result["actual"]
-                    status = result["status"]
-                    
-                    # Format target
-                    target_str = format_value(target_def["target"], target_def["unit"])
-                    
-                    # Format actual
-                    if actual is not None:
-                        actual_str = format_value(actual, target_def["unit"])
-                    else:
-                        actual_str = "N/A"
-                    
-                    # Status icon
-                    status_icon = {
-                        "PASS": "✅ PASS",
-                        "WARN": "⚠️ WARN",
-                        "FAIL": "❌ FAIL",
-                        "MISSING": "❓ MISSING",
-                    }.get(status, status)
-                    
-                    # Format metric name
-                    metric_display = metric_name.replace("_", " ").title()
-                    
-                    lines.append(f"| {metric_display} | {target_str} | {actual_str} | {status_icon} |")
-                
-                lines.append("")
         
         # Recommendations
-        if not quick and (stats["fail_count"] > 0 or stats["warn_count"] > 0):
+        if stats["fail_count"] > 0 or stats["warn_count"] > 0:
             lines.append("## Recommendations")
             lines.append("")
             
@@ -238,15 +202,14 @@ class PerformanceReport:
         
         return "\n".join(lines)
     
-    def write_report(self, output_path: Path, quick: bool = False):
+    def write_report(self, output_path: Path):
         """
         Write report to file.
         
         Args:
             output_path: Path to output markdown file
-            quick: If True, generate condensed report
         """
-        content = self.generate_markdown(quick=quick)
+        content = self.generate_markdown()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(content)
 
@@ -254,7 +217,6 @@ class PerformanceReport:
 def generate_report_from_metrics(
     metrics: Dict[str, float],
     output_path: Optional[Path] = None,
-    quick: bool = False
 ) -> str:
     """
     High-level function to generate a report from flat metrics dictionary.
@@ -262,7 +224,6 @@ def generate_report_from_metrics(
     Args:
         metrics: Dictionary of metric_name -> value
         output_path: Optional path to write report
-        quick: If True, generate condensed report
     
     Returns:
         Markdown formatted report
@@ -353,7 +314,7 @@ def generate_report_from_metrics(
         report.add_chapter_metrics(chapter, cleaned)
     
     # Generate and optionally write report
-    markdown = report.generate_markdown(quick=quick)
+    markdown = report.generate_markdown()
     
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)

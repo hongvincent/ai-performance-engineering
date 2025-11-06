@@ -15,9 +15,13 @@ __global__ void PrefetchExample(const float *in, float *out, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (idx < N) {
-        // Manually prefetch the next cache line (128B) of in[] into L2:
+        // The runtime has no device-side builtin for L2 prefetch; use cp.async.bulk.prefetch.
+        // Prefetch the next cache line (128B) of in[] into L2:
         if (idx + 32 < N) {
-            asm volatile("prefetch.global.L2 [%0];" :: "l"(in + idx + 32));
+            const float *next_ptr = in + idx + 32;
+            asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;"
+                         :
+                         : "l"(next_ptr), "n"(128));
         }
         
         float x = in[idx];
@@ -166,7 +170,7 @@ int main() {
     printf("Final result[0]: %.3f\n", h_out[0]);
     
     printf("\n=== PTX Optimization Notes ===\n");
-    printf("1. prefetch.global.L2 - Manually prefetch data into L2 cache\n");
+    printf("1. cp.async.bulk.prefetch.L2 - Manually prefetch data into L2 cache\n");
     printf("2. ld.global.cg - Load with cache global hint (L2 only, bypass L1)\n");
     printf("3. %%smid, %%laneid - Special registers for SM and lane identification\n");
     printf("4. Manual scheduling - Issue independent loads back-to-back for ILP\n");

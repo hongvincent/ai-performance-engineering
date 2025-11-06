@@ -1,11 +1,8 @@
 // Architecture-specific optimizations for CUDA 13.0
 // Targets Blackwell B200/B300 (sm_100)
 #include <cuda_runtime.h>
+#include <cstdio>
 #include <iostream>
-
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-#include "../common/cuda13_teasers.cuh"
-#endif
 
 __global__ void exampleKernel(const float* input, float* output, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -49,6 +46,8 @@ int main() {
         bestBlockSize,
         0  // dynamic shared memory size
     );
+    // On Blackwell, cluster-launched kernels should also consult
+    // cudaOccupancyMaxActiveClusters(...) to account for cluster size limits.
     
     // Get device properties to calculate occupancy percentage
     cudaDeviceProp prop;
@@ -106,31 +105,5 @@ int main() {
     cudaFree(d_input);
     cudaFree(d_output);
     
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-    // CUDA 13 teasers for Blackwell readers.
-    cuda13_teasers::stream_ordered_teaser();
-    cuda13_teasers::tma_teaser();
-#else
-    std::cout << "CUDA 13 teasers require CUDA 13 headers; see later chapters for full demos.\n";
-#endif
-
     return 0;
-}
-
-// CUDA 13.0 Stream-ordered Memory Allocation Example
-__global__ void stream_ordered_memory_example() {
-    // Example of stream-ordered memory allocation
-    // This is a placeholder for actual implementation
-    // See ch11/stream_ordered_allocator.cu for a full cudaMallocAsync demo.
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    // Your kernel code here
-}
-
-// CUDA 13.0 TMA (Tensor Memory Accelerator) Example
-__global__ void tma_example() {
-    // Example of TMA usage for Blackwell B200/B300
-    // This is a placeholder for actual implementation
-    // See ch7/async_prefetch_tma.cu or ch10/tma_2d_pipeline_blackwell.cu for real TMA usage.
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    // Your TMA code here
 }

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS="${SCRIPT_DIR}/profile_harness.py"
 PYTORCH_RUNNER="${SCRIPT_DIR}/pytorch_profiler_runner.py"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-DEFAULT_OUTPUT_ROOT="${REPO_ROOT}/profiles/manual"
+DEFAULT_OUTPUT_ROOT="${REPO_ROOT}/output/manual"
 PYTHON_DEFAULT="${PYTHON:-python}"
 
 DEFAULT_NCU_METRICS_RAW="$($PYTHON_DEFAULT -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); from metrics_config import BASE_NCU_METRICS; print(','.join(BASE_NCU_METRICS))" 2>/dev/null || true)"
@@ -312,8 +312,9 @@ mkdir -p "$SESSION_DIR"
 
 export CUDA_LAUNCH_BLOCKING=${CUDA_LAUNCH_BLOCKING:-0}
 export CUDA_CACHE_DISABLE=${CUDA_CACHE_DISABLE:-0}
-export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:128}}
-unset PYTORCH_CUDA_ALLOC_CONF
+export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:256}}
+export PYTHONFAULTHANDLER=${PYTHONFAULTHANDLER:-1}
+unset PYTORCH_CUDA_ALLOC_CONF 2>/dev/null || true
 
 if [[ "$SCRIPT_PATH" =~ /code/ch1/ || "$SCRIPT_PATH" =~ /code/ch2/ || "$SCRIPT_PATH" =~ /code/ch1[3-9]/ || "$SCRIPT_PATH" =~ /code/ch20/ ]]; then
     export TORCHINDUCTOR_AUTOTUNE=${TORCHINDUCTOR_AUTOTUNE:-0}

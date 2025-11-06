@@ -1,14 +1,18 @@
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """Chapter 19: Token precision switching and cache quantization helpers."""
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import logging
@@ -156,7 +160,7 @@ def _precision_context_cuda(use_fp8: bool, prefer_bfloat16: bool, enable_fp8: bo
     """
     if use_fp8 and enable_fp8 and _TE_AVAILABLE:
         # Note: fp8_autocast affects only TE-enabled modules. Non-TE modules run at their native dtypes.
-        return _te_fp8_autocast(enabled=True)
+        return _te_fp8_autocast(enabled=True)  # On Blackwell, TE defaults to MXFP8 kernels.
     amp_dtype = torch.bfloat16 if prefer_bfloat16 else torch.float16
     return torch.autocast(device_type="cuda", dtype=amp_dtype)
 
@@ -173,7 +177,7 @@ def decode_with_dynamic_precision(
     max_steps: int,
     *,
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    prefer_bfloat16: bool = True,        # B200: prefer BF16 over FP16 for AMP
+    prefer_bfloat16: bool = _ARCH_PREFER_BFLOAT16,  # B200: prefer BF16 over FP16 for AMP
     enable_fp8: bool = True,             # Set True to allow FP8 when TE present & stable confidence
     enter_fp8_threshold: float = 6.0,    # hysteresis upper bound (logit margin average)
     exit_fp8_threshold: float = 3.0,     # hysteresis lower bound (avoid flapping)
@@ -237,6 +241,7 @@ def decode_with_dynamic_precision(
                 use_fp8 = True
             elif use_fp8 and (conf_value < exit_fp8_threshold):
                 use_fp8 = False
+            # torch.autocast (AMP) in PyTorch 2.9 does not manage FP8/FP4; TE handles MXFP8/NVFP4 paths.
 
         # 5) EOS handling
         if eos_id is not None:

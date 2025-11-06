@@ -1,8 +1,17 @@
 """Simulate UCX/NCCL memory registration patterns to highlight fragmentation risks.
 
 Launch:
-    torchrun --standalone --nproc-per-node=2 ch4/ucx_fragmentation.py
+    torchrun --standalone --nproc-per-node=2 extras/ch4/ucx_fragmentation.py
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 from __future__ import annotations
 
@@ -12,10 +21,6 @@ import time
 import torch
 import torch.distributed as dist
 
-try:
-    import arch_config  # noqa: F401
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:

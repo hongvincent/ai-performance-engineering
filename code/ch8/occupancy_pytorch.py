@@ -3,17 +3,41 @@
 The focus is on sizing work to keep SMs busy, batching small ops, fusing chains,
 and choosing tensor layouts that map to efficient kernels.
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 from __future__ import annotations
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+CHAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(CHAPTER_DIR)
+if CHAPTER_DIR not in sys.path:
+    sys.path.insert(0, CHAPTER_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(1, REPO_ROOT)
 
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    from arch_config import (
+        get_compile_mode,
+        maybe_compile,
+        should_use_compile,
+    )
+except ImportError:  # Fallback if the helper is absent.
+    def maybe_compile(fn, *, default_mode: str = "reduce-overhead"):
+        return fn
 
+    def should_use_compile() -> bool:
+        return False
+
+    def get_compile_mode(default: str = "reduce-overhead") -> str:
+        return default
 
 import time
 import torch
@@ -102,13 +126,33 @@ def compile_fusion_demo() -> None:
         out = torch.nn.functional.gelu(out)
         return out + 1.0
 
-    # Avoid forcing fullgraph so TorchDynamo can handle dynamic shapes; toggle manually if shapes are static.
-    compiled = torch.compile(eager, mode="reduce-overhead")
+    compile_mode = get_compile_mode("reduce-overhead")
+    if not should_use_compile():
+        print(
+            "torch.compile disabled (set USE_COMPILE=1 to enable); showing eager timings only."
+        )
+        _benchmark("Eager (warm-up)", lambda: eager(x), iters=1)
+        _benchmark("Eager (no compile)", lambda: eager(x), iters=10)
+        print(f"Re-run with USE_COMPILE=1 COMPILE_MODE={compile_mode} for fusion demo.")
+        return
+
+    compiled = maybe_compile(eager, default_mode=compile_mode)
+    if compiled is eager:
+        print(
+            f"torch.compile request failed or was disabled; run with USE_COMPILE=1 "
+            f"COMPILE_MODE={compile_mode} for the fused comparison."
+        )
+        eager_ms = _benchmark("Eager (fallback)", lambda: eager(x), iters=10)
+        print(f"Repeat with compilation enabled to observe fusion benefits.")
+        return
+
     compiled(x)  # warm-up
 
     print("\n=== torch.compile for occupancy (kernel fusion) ===")
     eager_ms = _benchmark("Eager", lambda: eager(x), iters=10)
-    compiled_ms = _benchmark("Compiled", lambda: compiled(x), iters=10)
+    compiled_ms = _benchmark(
+        f"Compiled ({compile_mode})", lambda: compiled(x), iters=10
+    )
     print(f"Speedup (eager / compiled): {eager_ms / compiled_ms:5.2f}x")
 
 

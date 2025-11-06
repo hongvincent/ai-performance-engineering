@@ -8,12 +8,12 @@ PyTorch provides powerful profiling tools to identify bottlenecks in training an
 
 After completing this chapter, you can:
 
-- ✅ Profile PyTorch code to identify CPU and GPU bottlenecks
-- ✅ Analyze memory usage and eliminate memory leaks
-- ✅ Use compiled autograd for 1.5-2x backward pass speedup
-- ✅ Implement custom autograd functions for specialized operations
-- ✅ Apply FSDP (Fully Sharded Data Parallel) for large model training
-- ✅ Optimize DataLoader and mixed precision training
+- [OK] Profile PyTorch code to identify CPU and GPU bottlenecks
+- [OK] Analyze memory usage and eliminate memory leaks
+- [OK] Use compiled autograd for 1.5-2x backward pass speedup
+- [OK] Implement custom autograd functions for specialized operations
+- [OK] Apply FSDP (Fully Sharded Data Parallel) for large model training
+- [OK] Optimize DataLoader and mixed precision training
 
 ## Prerequisites
 
@@ -512,6 +512,59 @@ dataloader = torch.utils.data.DataLoader(
 
 ---
 
+## Baseline/Optimized Example Pairs
+
+All examples follow the `baseline_*.py` / `optimized_*.py` pattern and integrate with the benchmarking framework:
+
+### Available Pairs
+
+1. **DataLoader** (`baseline_dataloader_default.py` / `optimized_dataloader_tuned.py`)
+   - Default DataLoader vs tuned (workers, prefetch, pin_memory)
+   - Demonstrates I/O optimization for training pipelines
+
+2. **Autograd** (`baseline_autograd_standard.py` / `optimized_autograd_compiled.py`)
+   - Standard autograd vs compiled autograd with torch.compile
+   - Shows backward pass optimization
+
+3. **Bandwidth** (`baseline_bandwidth_naive.py` / `optimized_bandwidth_coalesced.py`)
+   - Naive vs coalesced memory access patterns
+   - Demonstrates bandwidth optimization through access pattern improvements
+
+4. **Precision** (`baseline_precision_fp32.py`, `baseline_precision_bf16.py` / `optimized_precision_mixed.py`, `optimized_precision_fp8.py`)
+   - FP32/BF16 vs Mixed Precision (FP16) and FP8 quantization
+   - Shows memory and speed improvements from lower precision
+
+5. **Training** (`baseline_training_standard.py` / `optimized_training_checkpoint.py`)
+   - Standard training vs gradient checkpointing
+   - Demonstrates memory-for-speed tradeoff
+
+6. **Arithmetic Intensity** (`baseline_arithmetic_intensity.py` / `optimized_arithmetic_intensity.py`)
+   - Memory-bound vs compute-bound operations
+   - Shows roofline model concepts
+
+7. **Memory Profiling** (`baseline_memory_profiling.py` / `optimized_memory_profiling.py`)
+   - Standard memory usage vs gradient checkpointing
+   - Demonstrates memory optimization techniques
+
+8. **Attention** (`baseline_attention_standard.py` / `optimized_attention_flex.py`)
+   - Standard attention vs FlexAttention
+   - Shows optimized attention implementations
+
+9. **KV Cache** (`baseline_kv_cache_naive.py` / `optimized_kv_cache.py`)
+   - Naive vs optimized KV cache management
+   - Demonstrates cache optimization patterns
+
+10. **Matrix Multiplication** (`baseline_matmul_pytorch.py` / `optimized_matmul_cutlass.py`)
+    - PyTorch matmul vs CUTLASS optimized kernels
+    - Shows library-level optimizations
+
+**Run comparisons:**
+```bash
+python3 compare.py  # Compares all baseline/optimized pairs
+```
+
+---
+
 ## How to Run All Examples
 
 ```bash
@@ -519,6 +572,9 @@ cd ch13
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Run baseline/optimized comparisons
+python3 compare.py                               # Compare all pairs
 
 # Memory profiling
 python3 memory_profiling.py
@@ -614,7 +670,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9, CUDA 13.0
+**Chapter Status**: [OK] Complete
 

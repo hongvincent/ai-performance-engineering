@@ -6,7 +6,7 @@ NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS)
 NVCC_LIBS = -lcuda
 SUFFIX = $(TARGET_SUFFIX)
 
-BASE_TARGETS = atomic_work_queue cuda_graphs dynamic_parallelism cuda_graphs_conditional cuda_graphs_conditional_enhanced
+BASE_TARGETS = baseline_work_queue optimized_work_queue baseline_cuda_graphs optimized_cuda_graphs baseline_cuda_graphs_conditional optimized_cuda_graphs_conditional baseline_cuda_graphs_conditional_enhanced optimized_cuda_graphs_conditional_enhanced dynamic_parallelism baseline_kernel_fusion optimized_kernel_fusion baseline_graph_bandwidth optimized_graph_bandwidth baseline_uneven_partition optimized_uneven_partition baseline_dynamic_parallelism optimized_dynamic_parallelism
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
 .PHONY: all clean compare blackwell grace-blackwell profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS)
@@ -15,20 +15,56 @@ all: $(TARGETS)
 	@echo "Building Chapter 12 examples with $(ARCH) (CUDA $(CUDA_VERSION))"
 	@echo "✓ Targeting $(ARCH_NAME)"
 
-atomic_work_queue$(SUFFIX): atomic_work_queue.cu
+baseline_work_queue$(SUFFIX): baseline_work_queue.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
 
-cuda_graphs$(SUFFIX): cuda_graphs.cu
+optimized_work_queue$(SUFFIX): optimized_work_queue.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
 
-cuda_graphs_conditional$(SUFFIX): cuda_graphs_conditional.cu
+baseline_uneven_partition$(SUFFIX): baseline_uneven_partition.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
 
-cuda_graphs_conditional_enhanced$(SUFFIX): cuda_graphs_conditional_enhanced.cu
+optimized_uneven_partition$(SUFFIX): optimized_uneven_partition.cu
+	$(NVCC) $(NVCC_FLAGS) -rdc=true -o $@ $< -lcudadevrt $(NVCC_LIBS)
+
+baseline_dynamic_parallelism$(SUFFIX): baseline_dynamic_parallelism.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+
+optimized_dynamic_parallelism$(SUFFIX): optimized_dynamic_parallelism.cu
+	$(NVCC) $(NVCC_FLAGS) -rdc=true -o $@ $< -lcudadevrt $(NVCC_LIBS)
+
+baseline_cuda_graphs$(SUFFIX): baseline_cuda_graphs.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+
+optimized_cuda_graphs$(SUFFIX): optimized_cuda_graphs.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+
+baseline_cuda_graphs_conditional$(SUFFIX): baseline_cuda_graphs_conditional.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+
+optimized_cuda_graphs_conditional$(SUFFIX): optimized_cuda_graphs_conditional.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+
+baseline_cuda_graphs_conditional_enhanced$(SUFFIX): baseline_cuda_graphs_conditional_enhanced.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+
+optimized_cuda_graphs_conditional_enhanced$(SUFFIX): optimized_cuda_graphs_conditional_enhanced.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
 
 dynamic_parallelism$(SUFFIX): dynamic_parallelism.cu
 	$(NVCC) $(NVCC_FLAGS) -rdc=true -o $@ $< -lcudadevrt $(NVCC_LIBS)
+
+baseline_kernel_fusion$(SUFFIX): baseline_kernel_fusion.cu
+	$(NVCC) $(NVCC_FLAGS) -lineinfo -o $@ $< $(NVCC_LIBS)
+
+optimized_kernel_fusion$(SUFFIX): optimized_kernel_fusion.cu
+	$(NVCC) $(NVCC_FLAGS) -lineinfo -o $@ $< $(NVCC_LIBS)
+
+baseline_graph_bandwidth$(SUFFIX): baseline_graph_bandwidth.cu
+	$(NVCC) $(NVCC_FLAGS) -lineinfo -o $@ $< $(NVCC_LIBS)
+
+optimized_graph_bandwidth$(SUFFIX): optimized_graph_bandwidth.cu
+	$(NVCC) $(NVCC_FLAGS) -lineinfo -o $@ $< $(NVCC_LIBS)
 
 compare: clean
 	@echo "========================================"

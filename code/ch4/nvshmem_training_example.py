@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Production NVSHMEM Training Patterns for 8x B200
-================================================
+"""Production NVSHMEM Training Patterns for 8x B200.
 
 Demonstrates how to extend PyTorch training workloads with NVSHMEM and
 torch.distributed.nn.SymmetricMemory for latency-critical paths on 8 GPU
@@ -26,14 +24,16 @@ unavailable, providing runnable fallbacks for development laptops.
 """
 
 from __future__ import annotations
-import sys
+
+import argparse
+import datetime
 import os
+import sys
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -45,12 +45,6 @@ except ImportError:
             os.environ.setdefault("MASTER_PORT", "29500")
             os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
 
-
-import argparse
-import datetime
-import os
-from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
 
 import torch
 import torch.distributed as dist

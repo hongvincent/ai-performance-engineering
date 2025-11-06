@@ -76,7 +76,7 @@ def generate_summary(memory_dir: Path) -> str:
     profile_files = sorted(memory_dir.glob("*.txt"))
     
     if not profile_files:
-        summary_lines.append("⚠️ No memory profile files found.\n")
+        summary_lines.append("WARNING: No memory profile files found.\n")
         return "\n".join(summary_lines)
     
     summary_lines.append("## Workload Memory Usage\n")
@@ -121,11 +121,11 @@ def generate_summary(memory_dir: Path) -> str:
         summary_lines.append(f"- Peak Utilization: {utilization:.1f}%\n")
         
         if utilization < 20:
-            summary_lines.append("- Status: ✅ Low memory usage - workloads fit comfortably\n")
+            summary_lines.append("- Status: [OK] Low memory usage - workloads fit comfortably\n")
         elif utilization < 60:
-            summary_lines.append("- Status: ✅ Moderate memory usage - room for larger models\n")
+            summary_lines.append("- Status: [OK] Moderate memory usage - room for larger models\n")
         elif utilization < 90:
-            summary_lines.append("- Status: ⚠️ High memory usage - approaching capacity\n")
+            summary_lines.append("- Status: WARNING: High memory usage - approaching capacity\n")
         else:
             summary_lines.append("- Status: 🚨 Very high memory usage - risk of OOM\n")
     

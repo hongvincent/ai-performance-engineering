@@ -26,10 +26,14 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    from arch_config import prefer_flash_sdpa  # type: ignore
+except Exception:
+    from contextlib import nullcontext
+
+    def prefer_flash_sdpa():
+        return nullcontext()
 
 import torch
 import torch.nn as nn
@@ -96,7 +100,8 @@ class SimpleTransformerBlock(nn.Module):
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         
-        attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+        with prefer_flash_sdpa():
+            attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
         attn = attn.transpose(1, 2).reshape(batch, seq_len, self.d_model)
         x = self.out_proj(attn) + residual
         
@@ -198,7 +203,7 @@ def test_fp8_native(
     print("="*80)
     
     if not check_fp8_support():
-        print("\n❌ ERROR: FP8 not supported on this GPU")
+        print("\nERROR: ERROR: FP8 not supported on this GPU")
         print("  Requires Hopper (SM 9.0) or Blackwell (SM 10.0)")
         return {}
     
@@ -243,20 +248,20 @@ def test_fp8_native(
     try:
         # Check if float8 types are available
         if hasattr(torch, 'float8_e4m3fn'):
-            print("  ✅ PyTorch FP8 dtype available")
-            print("  ⚠️  Note: Full FP8 training/inference requires transformer_engine")
-            print("  ⚠️  This benchmark shows FP16 performance as FP8 placeholder")
-            print("  ⚠️  See ch19/native_fp4_quantization.py for quantization examples")
+            print("  [OK] PyTorch FP8 dtype available")
+            print("  WARNING: Note: Full FP8 training/inference requires transformer_engine")
+            print("  WARNING: This benchmark shows FP16 performance as FP8 placeholder")
+            print("  WARNING: See ch19/native_fp4_quantization.py for quantization examples")
             
             # Use FP16 as proxy for now
             model_fp8 = SimpleGPT(n_layers=n_layers).to(device).half()
             results['fp8_proxy'] = benchmark_model(model_fp8, input_ids, 'FP8 (proxy=FP16)', warmup, iters)
             del model_fp8
         else:
-            print("  ❌ PyTorch float8 types not available")
+            print("  ERROR: PyTorch float8 types not available")
             print("  Install transformer_engine for production FP8 support")
     except Exception as e:
-        print(f"  ❌ FP8 test failed: {e}")
+        print(f"  ERROR: FP8 test failed: {e}")
     
     return results
 
@@ -290,8 +295,8 @@ def print_summary(results: Dict[str, BenchmarkResult]):
     print("\n" + "="*80)
     print("CONCLUSIONS")
     print("="*80)
-    print("✅ FP16: Provides ~2x speedup over FP32 with half the memory")
-    print("⚠️  FP8: Requires transformer_engine for production use")
+    print("[OK] FP16: Provides ~2x speedup over FP32 with half the memory")
+    print("WARNING: FP8: Requires transformer_engine for production use")
     print("📝 Note: These are HONEST results - no fabricated numbers")
     print("="*80)
 
@@ -322,7 +327,7 @@ def main():
     if args.output and results:
         with open(args.output, 'w') as f:
             json.dump({k: v.to_dict() for k, v in results.items()}, f, indent=2)
-        print(f"\n✅ Results saved to {args.output}")
+        print(f"\n[OK] Results saved to {args.output}")
 
 
 if __name__ == '__main__':

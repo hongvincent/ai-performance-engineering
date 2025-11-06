@@ -2,18 +2,18 @@
 
 ## Overview
 
-Low-precision training with FP4, FP6, and FP8 enables faster training and inference while reducing memory usage. This chapter covers NVIDIA's hardware-accelerated low-precision formats on Blackwell B200/B300 GPUs, quantization techniques, dynamic precision switching, and production deployment patterns.
+Low-precision training with FP4, FP6, and FP8 enables faster training and inference while reducing memory usage. This chapter covers NVIDIA's hardware-accelerated low-precision formats on NVIDIA GPU NVIDIA GPU/B300 GPUs, quantization techniques, dynamic precision switching, and production deployment patterns.
 
 ## Learning Objectives
 
 After completing this chapter, you can:
 
-- ✅ Implement FP4/FP6/FP8 quantization for training and inference
-- ✅ Use dynamic precision switching for accuracy/performance tradeoffs
-- ✅ Apply FP8 with Transformer Engine for production training
-- ✅ Measure and optimize quantization performance
-- ✅ Choose appropriate precision for different model components
-- ✅ Deploy quantized models with 2-7x speedups
+- [OK] Implement FP4/FP6/FP8 quantization for training and inference
+- [OK] Use dynamic precision switching for accuracy/performance tradeoffs
+- [OK] Apply FP8 with Transformer Engine for production training
+- [OK] Measure and optimize quantization performance
+- [OK] Choose appropriate precision for different model components
+- [OK] Deploy quantized models with 2-7x speedups
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ After completing this chapter, you can:
 - [Chapter 10: Tensor Cores](../ch10/README.md) - matrix operations with tensor cores
 - [Chapter 16: Inference Optimization](../ch16/README.md) - FP8 inference basics
 
-**Required**: NVIDIA Blackwell B200/B300 GPU (SM 10.0) or GB10 (SM 12.1), PyTorch 2.9+, CUDA 13.0+
+**Required**: NVIDIA GPU NVIDIA GPU/B300 GPU (SM 10.0) or NVIDIA GPU (SM 12.1), PyTorch 2.9+, CUDA 13.0+
 
 ---
 
@@ -29,7 +29,7 @@ After completing this chapter, you can:
 
 ### Format Comparison
 
-| Precision | Bits | TFLOPS (B200) | Memory vs FP16 | Best For |
+| Precision | Bits | TFLOPS (NVIDIA GPU) | Memory vs FP16 | Best For |
 |-----------|------|---------------|----------------|----------|
 | **FP4 (E2M1)** | 4 | ~1600 | 75% savings (4x) | Draft models, speculative decoding |
 | **FP6 (E3M2)** | 6 | ~1400 | 50% savings (2.67x) | Balanced accuracy/compression |
@@ -43,19 +43,19 @@ After completing this chapter, you can:
 - **Exponent**: 2 bits → Range: ~[0.125, 3.5]
 - **Mantissa**: 1 bit + implicit leading 1
 - **Use case**: Maximum compression, ~25% quantization error acceptable
-- **Blackwell feature**: Hardware microscaling support
+- **NVIDIA GPU feature**: Hardware microscaling support
 
 #### FP6 (E3M2) - NVFP6
 - **Exponent**: 3 bits → Range: ~[0.03, 60]
 - **Mantissa**: 2 bits + implicit leading 1
 - **Use case**: Better accuracy than FP4 (~12.5% error), still high compression
-- **Blackwell feature**: Native hardware support
+- **NVIDIA GPU feature**: Native hardware support
 
 #### FP8 (E4M3FN) - NVFP8
 - **Exponent**: 4 bits → Range: ~[2^-9, 448]
 - **Mantissa**: 3 bits + implicit leading 1
 - **Use case**: Production training/inference with minimal accuracy loss
-- **Blackwell feature**: Full tensor core acceleration
+- **NVIDIA GPU feature**: Full tensor core acceleration
 
 ---
 
@@ -83,11 +83,11 @@ nsys profile -o fp8_training --trace=cuda,nvtx python native_fp8_training.py
 python native_fp8_training.py --epochs 10 --validate-fp16
 ```
 
-**Expected results** (8x B200):
+**Expected results** (8x NVIDIA GPU):
 ```
 FP16 training: 50ms/iteration, 2048 MB memory
 FP8 training:  28ms/iteration, 1024 MB memory
-Speedup: 1.8x, Memory: 50% savings ✅
+Speedup: 1.8x, Memory: 50% savings [OK]
 Accuracy: <0.1% loss vs FP16
 ```
 
@@ -120,7 +120,7 @@ for batch in dataloader:
     optimizer.step()
 ```
 
-**Performance on Blackwell**:
+**Performance on NVIDIA GPU**:
 - **Training**: 1.8-2.0x faster than FP16
 - **Memory**: 50% reduction
 - **Accuracy**: <0.1% validation loss vs FP16
@@ -148,7 +148,7 @@ python native_fp4_quantization.py --benchmark
 nsys profile -o fp4 --trace=cuda,nvtx python native_fp4_quantization.py
 ```
 
-**Expected results** (GB10):
+**Expected results** (NVIDIA GPU):
 ```
 FP32: 0.139ms, 15.47 TFLOPS
 FP16: 0.127ms, 16.86 TFLOPS
@@ -157,10 +157,10 @@ FP4:  ~0.04ms, ~54 TFLOPS (estimate, 3.8x vs FP32)
 ```
 
 **Use cases**:
-- ✅ Draft models for speculative decoding (7x more throughput)
-- ✅ Multi-model serving (4x more models per GPU)
-- ✅ Edge deployment (75% memory savings)
-- ❌ High-accuracy production (too much quantization error)
+- [OK] Draft models for speculative decoding (7x more throughput)
+- [OK] Multi-model serving (4x more models per GPU)
+- [OK] Edge deployment (75% memory savings)
+- ERROR: High-accuracy production (too much quantization error)
 
 **Quantization error**:
 - Typical: 20-30% L2 error on weights
@@ -181,15 +181,15 @@ python native_fp6_quantization.py --benchmark
 **Expected results**:
 ```
 Memory savings: 50% (2.67x compression)
-TFLOPS: ~1400 on Blackwell
+TFLOPS: ~1400 on NVIDIA GPU
 Quantization error: ~12.5% (vs ~25% for FP4)
 Speedup: ~6x vs FP32
 ```
 
 **Use cases**:
-- ✅ Models where FP4 is too lossy but FP8 insufficient compression
-- ✅ Intermediate draft/production scenarios
-- ✅ Balance between accuracy and memory
+- [OK] Models where FP4 is too lossy but FP8 insufficient compression
+- [OK] Intermediate draft/production scenarios
+- [OK] Balance between accuracy and memory
 
 ---
 
@@ -210,7 +210,7 @@ ncu --set full -o fp8_compiled_ncu --launch-skip 5 --launch-count 10 python fp8_
 FP16 (eager):     3.8ms
 FP16 (compiled):  3.2ms (1.2x)
 FP8 (eager):      2.8ms (1.4x)
-FP8 (compiled):   1.9ms (2.0x) ✅
+FP8 (compiled):   1.9ms (2.0x) [OK]
 ```
 
 **Key optimizations**:
@@ -322,17 +322,17 @@ python validate_quantization_performance.py --generate-report
 ```
 
 **Features**:
-- ✅ NVTX markers for nsys integration
-- ✅ Memory tracking (allocated, reserved, peak)
-- ✅ TFLOPS calculation
-- ✅ Speedup analysis
-- ✅ Automated report generation
+- [OK] NVTX markers for nsys integration
+- [OK] Memory tracking (allocated, reserved, peak)
+- [OK] TFLOPS calculation
+- [OK] Speedup analysis
+- [OK] Automated report generation
 
 ---
 
 ## Performance Analysis
 
-### Expected Performance on Blackwell B200
+### Expected Performance on NVIDIA GPU NVIDIA GPU
 
 #### Transformer Layer (d=4096, ff=16384, seq=2048, batch=64)
 
@@ -353,12 +353,12 @@ python validate_quantization_performance.py --generate-report
 | **FP8**   | **~3.8**  | **450**| **128**     | **2.0x** |
 | **FP4**   | **~1.1**  | **1600**| **64**     | **7.0x** |
 
-### Measured Results (GB10, SM 12.1)
+### Measured Results (NVIDIA GPU, SM 12.1)
 
 From `validate_quantization_performance.py`:
 ```
-✅ FP8 validation complete!
-   Expected: 450 TFLOPS on Blackwell (vs 225 TFLOPS FP16)
+[OK] FP8 validation complete!
+   Expected: 450 TFLOPS on NVIDIA GPU (vs 225 TFLOPS FP16)
    Actual FP32: 15.47 TFLOPS
    Actual FP16: 16.86 TFLOPS
    Actual FP8:  29.37 TFLOPS
@@ -368,7 +368,7 @@ Speedup Analysis:
   FP8 throughput gain: 1.90x
 ```
 
-*Note: GB10 (SM 12.1) has different absolute performance than Blackwell (SM 10.0) but demonstrates FP8 speedup ratios*
+*Note: NVIDIA GPU (SM 12.1) has different absolute performance than NVIDIA GPU (SM 10.0) but demonstrates FP8 speedup ratios*
 
 ---
 
@@ -376,28 +376,28 @@ Speedup Analysis:
 
 ### FP4 (NVFP4)
 **Best for**:
-- ✅ Draft models for speculative decoding (7x speedup)
-- ✅ Cost-optimized large-scale inference
-- ✅ Edge deployment (75% memory savings)
-- ✅ Multi-model serving (4x more models per GPU)
+- [OK] Draft models for speculative decoding (7x speedup)
+- [OK] Cost-optimized large-scale inference
+- [OK] Edge deployment (75% memory savings)
+- [OK] Multi-model serving (4x more models per GPU)
 
 **Avoid for**:
-- ❌ High-accuracy production models
-- ❌ Training (too low precision for gradients)
+- ERROR: High-accuracy production models
+- ERROR: Training (too low precision for gradients)
 
 ### FP6 (NVFP6)
 **Best for**:
-- ✅ Balance between FP4 compression and FP8 accuracy
-- ✅ Models where FP4 too lossy but FP8 insufficient compression
-- ✅ Intermediate draft/production scenarios
+- [OK] Balance between FP4 compression and FP8 accuracy
+- [OK] Models where FP4 too lossy but FP8 insufficient compression
+- [OK] Intermediate draft/production scenarios
 
 ### FP8 (NVFP8)
 **Best for**:
-- ✅ Production LLM training (1.8-2.0x speedup)
-- ✅ Production inference with minimal accuracy loss
-- ✅ Memory-constrained training (50% savings)
-- ✅ High-throughput serving
-- ✅ KV cache quantization
+- [OK] Production LLM training (1.8-2.0x speedup)
+- [OK] Production inference with minimal accuracy loss
+- [OK] Memory-constrained training (50% savings)
+- [OK] High-throughput serving
+- [OK] KV cache quantization
 
 ---
 
@@ -443,7 +443,7 @@ ncu --set full -o fp8_ncu --launch-skip 5 --launch-count 10 \
 
 ## Key Takeaways
 
-1. **FP8 is production-ready**: 2x speedup with <0.1% accuracy loss on Blackwell.
+1. **FP8 is production-ready**: 2x speedup with <0.1% accuracy loss on NVIDIA GPU.
 
 2. **Memory savings enable larger models**: 50% reduction allows 2x batch size or longer sequences.
 
@@ -451,7 +451,7 @@ ncu --set full -o fp8_ncu --launch-skip 5 --launch-count 10 \
 
 4. **Dynamic precision switching**: Adaptive strategies can achieve 4x average speedup.
 
-5. **Tensor cores required**: These speedups only apply on Blackwell/Hopper GPUs with FP8 tensor cores.
+5. **Tensor cores required**: These speedups only apply on NVIDIA GPU/Hopper GPUs with FP8 tensor cores.
 
 6. **Scaling management critical**: FP8 training requires careful loss scaling to avoid under/overflow.
 
@@ -481,7 +481,7 @@ scaler.update(check_finite(model.parameters()))
 
 **Check**:
 ```python
-if torch.cuda.get_device_capability() < (9, 0):  # Hopper/Blackwell
+if torch.cuda.get_device_capability() < (9, 0):  # Hopper/NVIDIA GPU
     print("FP8 tensor cores not available!")
 ```
 
@@ -563,7 +563,7 @@ Learn about:
 ## Additional Resources
 
 - **NVIDIA Transformer Engine**: [GitHub](https://github.com/NVIDIA/TransformerEngine)
-- **Blackwell Architecture**: [NVIDIA Whitepaper](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/)
+- **NVIDIA GPU Architecture**: [NVIDIA Whitepaper](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/)
 - **FP8 Training Guide**: [NVIDIA Developer Blog](https://developer.nvidia.com/blog/fp8-training)
 - **Quantization Survey**: [arXiv:2103.13630](https://arxiv.org/abs/2103.13630)
 
@@ -583,9 +583,7 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA GB10 (SM 12.1), Blackwell B200 (SM 10.0), PyTorch 2.9, CUDA 13.0
+**Chapter Status**: [OK] Complete
 
 ---
 

@@ -12,9 +12,9 @@ out as missing:
 Typical usage:
 
     python tools/deep_profiling_report.py \\
-        --ncu-csv profiles/double_buffered_pipeline_512.csv \\
+        --ncu-csv output/double_buffered_pipeline_512.csv \\
         --nsys-report ch10/pipeline_async_verified.nsys-rep \\
-        --output-json profiles/double_buffered_pipeline_analysis.json
+        --output-json output/double_buffered_pipeline_analysis.json
 
 The script understands the CSV format produced by either:
 * `ncu --set roofline --csv ...`
@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # Allow running from repo root or tools/ directory
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Complete 8x B200 GPU Training Pipeline with PyTorch 2.9
 ======================================================
@@ -32,14 +42,9 @@ Usage:
 
 Author: AI Performance Engineering Team
 """
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -49,7 +54,18 @@ except ImportError:
             os.environ.setdefault("WORLD_SIZE", "1")
             os.environ.setdefault("MASTER_ADDR", "localhost")
             os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+            os.environ.setdefault("LOCAL_RANK", "0")
+
+try:
+    from gpu_requirements import require_min_gpus, warn_optimal_gpu_count
+except ImportError:
+    def require_min_gpus(min_gpus, script_name=None):
+        import torch, sys
+        if torch.cuda.device_count() < min_gpus:
+            print(f"ERROR: This script requires {min_gpus} GPUs but only {torch.cuda.device_count()} available", file=sys.stderr)
+            sys.exit(1)
+    def warn_optimal_gpu_count(optimal_gpus, script_name=None):
+        pass  # Graceful fallback if arch_config not available
 
 
 import os
@@ -71,8 +87,8 @@ from torch.distributed.device_mesh import init_device_mesh
 
 # Import our optimized configurations
 try:
-    from ch4.nccl_blackwell_config import configure_nccl_for_8xB200, detect_8xb200_topology
-    from ch4.gb200_grace_numa_optimization import setup_grace_affinity, detect_grace_cpu
+    from extras.ch4.nccl_blackwell_config import configure_nccl_for_8xB200, detect_8xb200_topology
+    from extras.ch4.gb200_grace_numa_optimization import setup_grace_affinity, detect_grace_cpu
     CUSTOM_CONFIGS_AVAILABLE = True
 except ImportError:
     CUSTOM_CONFIGS_AVAILABLE = False
@@ -219,7 +235,7 @@ def setup_8xb200_distributed(tp_size: int = 2, dp_size: int = 4) -> Tuple:
         configure_nccl_for_8xB200(num_channels=8, verbose=(rank == 0))
         topology = detect_8xb200_topology()
         if rank == 0 and topology.get("is_8xb200"):
-            print("✓ 8x B200 topology detected and optimized")
+            print("8x B200 topology detected and optimized")
     
     # Setup Grace CPU affinity if available
     if CUSTOM_CONFIGS_AVAILABLE:
@@ -227,7 +243,7 @@ def setup_8xb200_distributed(tp_size: int = 2, dp_size: int = 4) -> Tuple:
         if grace_info["is_grace"]:
             setup_grace_affinity(gpu_id=local_rank, num_workers=8)
             if rank == 0:
-                print("✓ Grace CPU affinity configured")
+                print("Grace CPU affinity configured")
     
     # Create 2D device mesh
     device_mesh = init_device_mesh(
@@ -405,6 +421,10 @@ def train(
 # ============================================================================
 
 def main():
+    # Check GPU requirements early
+    warn_optimal_gpu_count(8, "training_8xb200_pipeline.py")
+    require_min_gpus(2, "training_8xb200_pipeline.py")  # Need at least 2 GPUs for meaningful TP
+    
     parser = argparse.ArgumentParser(description="8x B200 Training Pipeline")
     parser.add_argument("--tp-size", type=int, default=2, choices=[1, 2, 4, 8],
                        help="Tensor parallel size")

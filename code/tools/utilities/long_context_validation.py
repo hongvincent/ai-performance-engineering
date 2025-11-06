@@ -236,7 +236,7 @@ def validate_long_context(
         print(f"    KV cache: {kv_cache_size_gb:.2f} GB")
         print(f"    Peak memory: {peak_memory_gb:.2f} GB")
         print(f"    Memory BW: {memory_bandwidth_gbps:.1f} GB/s")
-        print(f"    ✅ SUCCESS")
+        print(f"    [OK] SUCCESS")
         
         return LongContextMetrics(
             sequence_length=seq_length,
@@ -253,7 +253,7 @@ def validate_long_context(
         )
         
     except torch.cuda.OutOfMemoryError as e:
-        print(f"    ❌ OUT OF MEMORY")
+        print(f"    ERROR: OUT OF MEMORY")
         torch.cuda.empty_cache()
         return LongContextMetrics(
             sequence_length=seq_length,
@@ -271,7 +271,7 @@ def validate_long_context(
         )
     
     except Exception as e:
-        print(f"    ❌ ERROR: {e}")
+        print(f"    ERROR: ERROR: {e}")
         return LongContextMetrics(
             sequence_length=seq_length,
             batch_size=batch_size,
@@ -347,7 +347,7 @@ def run_full_suite(output_file: str = "long_context_results.json"):
     print("-" * 90)
     
     for r in results:
-        status = "✅ OK" if r['success'] else "❌ FAIL"
+        status = "[OK] OK" if r['success'] else "ERROR: FAIL"
         print(f"{r['sequence_length']:<10} {r['precision']:<10} "
               f"{r['kv_cache_size_gb']:<12.2f} {r['peak_memory_gb']:<12.2f} "
               f"{r['forward_time_ms']:<10.1f} {status:<10}")

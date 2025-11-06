@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 GB200/GB300 Grace CPU NUMA Optimization for PyTorch 2.9
 =======================================================
@@ -28,17 +38,12 @@ Usage:
     python gb200_grace_numa_optimization.py
     
     Or in your training script:
-    from ch4.gb200_grace_numa_optimization import setup_grace_affinity
+    from extras.ch4.gb200_grace_numa_optimization import setup_grace_affinity
     setup_grace_affinity(gpu_id=0, num_workers=8)
 """
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -122,33 +127,58 @@ def get_numa_topology() -> Dict[int, Dict]:
         
         current_node = None
         for line in result.stdout.split('\n'):
-            if line.startswith('node'):
+            if line.startswith('node') and 'cpus:' in line:
+                # Parse "node X cpus: ..." lines
                 parts = line.split()
                 if len(parts) >= 4:
                     node_id = int(parts[1])
                     current_node = node_id
-                    topology[node_id] = {
-                        "cpus": [],
-                        "size_gb": 0,
-                        "gpus": [],
-                    }
+                    
+                    # Initialize node entry if it doesn't exist
+                    if node_id not in topology:
+                        topology[node_id] = {
+                            "cpus": [],
+                            "size_gb": 0,
+                            "gpus": [],
+                        }
                     
                     # Parse CPU list
-                    if 'cpus:' in line:
-                        cpu_str = line.split('cpus:')[1].strip()
-                        # Parse CPU ranges (e.g., "0-17,36-53")
-                        for part in cpu_str.split(','):
-                            if '-' in part:
-                                start, end = map(int, part.split('-'))
-                                topology[node_id]["cpus"].extend(range(start, end + 1))
-                            elif part:
-                                topology[node_id]["cpus"].append(int(part))
+                    cpu_str = line.split('cpus:')[1].strip()
+                    # Parse CPU ranges (e.g., "0-17,36-53" or "0 1 2 3")
+                    # Normalize to use commas, then parse
+                    if ',' not in cpu_str and ' ' in cpu_str:
+                        # Space-separated: "0 1 2 3" -> "0,1,2,3"
+                        cpu_str = cpu_str.replace(' ', ',')
+                    
+                    for part in cpu_str.split(','):
+                        part = part.strip()
+                        if not part:
+                            continue
+                        if '-' in part:
+                            # Range: "0-17"
+                            start, end = map(int, part.split('-'))
+                            topology[node_id]["cpus"].extend(range(start, end + 1))
+                        else:
+                            # Single CPU
+                            topology[node_id]["cpus"].append(int(part))
             
-            elif current_node is not None and 'size:' in line:
+            elif line.startswith('node') and 'size:' in line:
+                # Parse "node X size: ..." lines
                 parts = line.split()
-                if 'MB' in line:
+                if len(parts) >= 4 and 'MB' in line:
+                    node_id = int(parts[1])
+                    current_node = node_id
+                    
+                    # Initialize node entry if it doesn't exist
+                    if node_id not in topology:
+                        topology[node_id] = {
+                            "cpus": [],
+                            "size_gb": 0,
+                            "gpus": [],
+                        }
+                    
                     size_mb = int(parts[3])
-                    topology[current_node]["size_gb"] = size_mb / 1024
+                    topology[node_id]["size_gb"] = size_mb / 1024
     except Exception as e:
         print(f"Warning: Could not parse NUMA topology: {e}")
     
@@ -238,7 +268,7 @@ def setup_grace_affinity(
     try:
         os.sched_setaffinity(0, cpu_list)
         if verbose:
-            print(f"✓ GPU {gpu_id} affinity set:")
+            print(f"GPU {gpu_id} affinity set:")
             print(f"  NUMA node: {numa_node}")
             print(f"  CPUs: {cpu_list}")
             print(f"  Memory: {topology[numa_node]['size_gb']:.1f} GB")
@@ -404,7 +434,7 @@ def print_grace_system_info() -> None:
     # CPU Information
     print("\nCPU:")
     if info["is_grace"]:
-        print("  ✓ Grace CPU detected (ARM Neoverse V2)")
+        print("  Grace CPU detected (ARM Neoverse V2)")
     else:
         print(f"  Architecture: {info['cpu_arch']}")
         print(f"  Model: {info.get('cpu_model', 'Unknown')}")
@@ -431,19 +461,19 @@ def print_grace_system_info() -> None:
             is_blackwell = props.major == 10 and props.minor == 0
             print(f"  GPU {i}: {props.name}")
             if is_blackwell:
-                print(f"    ✓ Blackwell B200/B300")
+                print(f"    Blackwell B200/B300")
                 print(f"    Memory: {props.total_memory / 1e9:.0f} GB HBM3e")
                 print(f"    SMs: 148")
     
     # GB200/GB300 Specific Features
     if info["is_grace"] and info["gpus"] > 0:
-        print("\n✓ GB200/GB300 Features:")
+        print("\nGB200/GB300 Features:")
         print("  - NVLink-C2C: 900 GB/s CPU↔GPU coherent bandwidth")
         print("  - Unified memory address space")
         print("  - Optimal for CPU preprocessing + GPU compute")
         
         if info["gpus"] == 8:
-            print("\n✓ 8x B200 Configuration:")
+            print("\n8x B200 Configuration:")
             print("  - Total: 1184 SMs, 1.44 TB HBM3e")
             print("  - GPU-GPU: 1800 GB/s NVLink 5.0")
             print("  - Aggregate: 62.4 TB/s bandwidth")
@@ -477,11 +507,11 @@ def main():
     print("Usage Examples")
     print("=" * 80)
     print("\n1. Setup CPU affinity for GPU:")
-    print("   from ch4.gb200_grace_numa_optimization import setup_grace_affinity")
+    print("   from extras.ch4.gb200_grace_numa_optimization import setup_grace_affinity")
     print("   cpu_list, numa_node = setup_grace_affinity(gpu_id=0, num_workers=8)")
     
     print("\n2. Configure DataLoader for Grace:")
-    print("   from ch4.gb200_grace_numa_optimization import optimize_data_loading_for_grace")
+    print("   from extras.ch4.gb200_grace_numa_optimization import optimize_data_loading_for_grace")
     print("   loader_kwargs = optimize_data_loading_for_grace(gpu_id=0, batch_size=32)")
     print("   dataloader = DataLoader(dataset, **loader_kwargs)")
     

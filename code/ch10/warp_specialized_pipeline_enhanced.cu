@@ -25,7 +25,7 @@ namespace cg = cooperative_groups;
 
 constexpr int TILE = 128;
 constexpr int TILE_ELEMS = TILE * TILE;
-constexpr int PIPELINE_DEPTH = 4;  // Deep pipeline for Blackwell
+constexpr int PIPELINE_DEPTH = 2;  // Double-buffer pipeline for Blackwell
 
 // Enhanced compute with more work to showcase pipeline benefits
 __device__ void compute_tile_enhanced(const float* a, const float* b, float* c, int lane) {
@@ -44,7 +44,7 @@ __device__ void compute_tile_enhanced(const float* a, const float* b, float* c, 
 }
 
 // Enhanced warp-specialized kernel with:
-// - Deeper pipeline (4 stages vs 1)
+// - Double-buffer pipeline (2 stages)
 // - More compute warps (6 vs 1)
 // - Producer/consumer overlap without global sync
 __global__ void warp_specialized_enhanced_kernel(const float* __restrict__ A,
@@ -53,7 +53,7 @@ __global__ void warp_specialized_enhanced_kernel(const float* __restrict__ A,
                                                   int total_tiles) {
   cg::thread_block block = cg::this_thread_block();
   
-  // Triple buffering for deep pipeline
+  // Double buffering for the pipeline
   extern __shared__ float smem[];
   float* A_tiles = smem;
   float* B_tiles = smem + PIPELINE_DEPTH * TILE_ELEMS;
@@ -281,4 +281,3 @@ int main() {
   CUDA_CHECK(cudaFree(d_C));
   return 0;
 }
-

@@ -2,7 +2,16 @@
 
 include ../common/cuda_arch.mk
 
-NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) --threads=0
+NVCC_LINEINFO ?= -lineinfo
+PTXAS_WARN ?= -Xptxas=-warn-spills
+
+ifeq ($(strip $(MAXRREGCOUNT)),)
+MAXRREGCOUNT_FLAG :=
+else
+MAXRREGCOUNT_FLAG := -maxrregcount=$(MAXRREGCOUNT)
+endif
+
+NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) $(NVCC_LINEINFO) --threads=0 $(PTXAS_WARN) $(MAXRREGCOUNT_FLAG)
 SUFFIX = $(TARGET_SUFFIX)
 
 CUDA_SOURCES = $(wildcard *.cu)

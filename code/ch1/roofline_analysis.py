@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Roofline Analysis Tool for NVIDIA B200
 
@@ -9,11 +19,51 @@ Usage:
     python3 roofline_analysis.py
 """
 
-import torch
+import os
 import time
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Callable
+
+import torch
+
+try:
+    import ch1.arch_config  # noqa: F401 - Apply chapter defaults
+except ImportError:
+    pass
+
+ROOFLINE_QUICK = os.environ.get("ROOFLINE_QUICK", "0") == "1"
+
+VECTOR_CONFIG = {
+    "size": 500_000 if ROOFLINE_QUICK else 10_000_000,
+    "warmup": 2 if ROOFLINE_QUICK else 10,
+    "iterations": 10 if ROOFLINE_QUICK else 100,
+}
+
+if ROOFLINE_QUICK:
+    MATRIX_CONFIG = [
+        {"size": 256, "warmup": 2, "iterations": 20},
+        {"size": 512, "warmup": 2, "iterations": 10},
+        {"size": 1024, "warmup": 1, "iterations": 5},
+    ]
+else:
+    MATRIX_CONFIG = [
+        {"size": 512, "warmup": 10, "iterations": 100},
+        {"size": 2048, "warmup": 5, "iterations": 20},
+        {"size": 4096, "warmup": 3, "iterations": 10},
+    ]
+
+
+def cuda_ready() -> bool:
+    """Return True if CUDA is available and usable on this system."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        torch.zeros(1, device="cuda")
+    except Exception as exc:
+        print(f"WARNING: CUDA initialization failed: {exc}")
+        return False
+    return True
 
 
 class RooflineAnalyzer:
@@ -163,7 +213,7 @@ class RooflineAnalyzer:
         # Save
         plt.tight_layout()
         plt.savefig(output_file, dpi=150, bbox_inches='tight')
-        print(f"✅ Roofline plot saved to {output_file}")
+        print(f"[OK] Roofline plot saved to {output_file}")
         plt.close()
 
 
@@ -171,15 +221,17 @@ def benchmark_vector_operations(analyzer: RooflineAnalyzer) -> List[Dict]:
     """Benchmark simple vector operations."""
     results = []
     
-    N = 10_000_000
-    print(f"Benchmarking vector operations (N={N:,})...")
+    N = VECTOR_CONFIG["size"]
+    warmup = VECTOR_CONFIG["warmup"]
+    iterations = VECTOR_CONFIG["iterations"]
+    print(f"Benchmarking vector operations (N={N:,}, warmup={warmup}, iterations={iterations})...")
     
     # Vector Add: out = a + b
     print("  • Vector Add...")
     a = torch.randn(N, device='cuda', dtype=torch.float32)
     b = torch.randn(N, device='cuda', dtype=torch.float32)
     
-    time_add = analyzer.measure_kernel(lambda: a + b)
+    time_add = analyzer.measure_kernel(lambda: a + b, warmup=warmup, iterations=iterations)
     flops_add = N  # 1 FLOP per element
     bytes_add = 3 * N * 4  # 2 reads + 1 write, 4 bytes each
     ai_add = analyzer.calculate_ai(flops_add, bytes_add)
@@ -194,7 +246,7 @@ def benchmark_vector_operations(analyzer: RooflineAnalyzer) -> List[Dict]:
     
     # Vector Multiply: out = a * b
     print("  • Vector Multiply...")
-    time_mul = analyzer.measure_kernel(lambda: a * b)
+    time_mul = analyzer.measure_kernel(lambda: a * b, warmup=warmup, iterations=iterations)
     flops_mul = N
     bytes_mul = 3 * N * 4
     ai_mul = analyzer.calculate_ai(flops_mul, bytes_mul)
@@ -209,7 +261,7 @@ def benchmark_vector_operations(analyzer: RooflineAnalyzer) -> List[Dict]:
     
     # Fused: out = (a + b) * (a - b)
     print("  • Fused Add-Sub-Mul...")
-    time_fused = analyzer.measure_kernel(lambda: (a + b) * (a - b))
+    time_fused = analyzer.measure_kernel(lambda: (a + b) * (a - b), warmup=warmup, iterations=iterations)
     flops_fused = 3 * N  # 1 add + 1 sub + 1 mul
     bytes_fused = 3 * N * 4  # 2 reads + 1 write (intermediate results in registers!)
     ai_fused = analyzer.calculate_ai(flops_fused, bytes_fused)
@@ -228,65 +280,30 @@ def benchmark_vector_operations(analyzer: RooflineAnalyzer) -> List[Dict]:
 def benchmark_matrix_operations(analyzer: RooflineAnalyzer) -> List[Dict]:
     """Benchmark matrix operations."""
     results = []
-    
-    # Small matrix multiply
-    M = 512
-    print(f"\nBenchmarking matrix operations (M={M})...")
-    print("  • MatMul (512×512)...")
-    A_small = torch.randn(M, M, device='cuda', dtype=torch.float16)
-    B_small = torch.randn(M, M, device='cuda', dtype=torch.float16)
-    
-    time_mm_small = analyzer.measure_kernel(lambda: torch.mm(A_small, B_small))
-    flops_mm_small = 2 * M**3  # 2N³ for matrix multiply
-    bytes_mm_small = 3 * M**2 * 2  # 3 matrices, 2 bytes (FP16)
-    ai_mm_small = analyzer.calculate_ai(flops_mm_small, bytes_mm_small)
-    achieved_tflops_mm_small = (flops_mm_small / time_mm_small) / 1e12
-    
-    results.append({
-        'name': 'MatMul (512)',
-        'ai': ai_mm_small,
-        'achieved_tflops': achieved_tflops_mm_small,
-        'time_ms': time_mm_small * 1000
-    })
-    
-    # Medium matrix multiply
-    M = 2048
-    print(f"  • MatMul (2048×2048)...")
-    A_med = torch.randn(M, M, device='cuda', dtype=torch.float16)
-    B_med = torch.randn(M, M, device='cuda', dtype=torch.float16)
-    
-    time_mm_med = analyzer.measure_kernel(lambda: torch.mm(A_med, B_med), iterations=20)
-    flops_mm_med = 2 * M**3
-    bytes_mm_med = 3 * M**2 * 2
-    ai_mm_med = analyzer.calculate_ai(flops_mm_med, bytes_mm_med)
-    achieved_tflops_mm_med = (flops_mm_med / time_mm_med) / 1e12
-    
-    results.append({
-        'name': 'MatMul (2048)',
-        'ai': ai_mm_med,
-        'achieved_tflops': achieved_tflops_mm_med,
-        'time_ms': time_mm_med * 1000
-    })
-    
-    # Large matrix multiply (closer to ridge point)
-    M = 4096
-    print(f"  • MatMul (4096×4096)...")
-    A_large = torch.randn(M, M, device='cuda', dtype=torch.float16)
-    B_large = torch.randn(M, M, device='cuda', dtype=torch.float16)
-    
-    time_mm_large = analyzer.measure_kernel(lambda: torch.mm(A_large, B_large), iterations=10)
-    flops_mm_large = 2 * M**3
-    bytes_mm_large = 3 * M**2 * 2
-    ai_mm_large = analyzer.calculate_ai(flops_mm_large, bytes_mm_large)
-    achieved_tflops_mm_large = (flops_mm_large / time_mm_large) / 1e12
-    
-    results.append({
-        'name': 'MatMul (4096)',
-        'ai': ai_mm_large,
-        'achieved_tflops': achieved_tflops_mm_large,
-        'time_ms': time_mm_large * 1000
-    })
-    
+
+    print("\nBenchmarking matrix operations...")
+    for bench in MATRIX_CONFIG:
+        M = bench["size"]
+        warmup = bench["warmup"]
+        iterations = bench["iterations"]
+        print(f"  • MatMul ({M}×{M})...")
+        A = torch.randn(M, M, device='cuda', dtype=torch.float16)
+        B = torch.randn(M, M, device='cuda', dtype=torch.float16)
+
+        time_mm = analyzer.measure_kernel(lambda: torch.mm(A, B),
+                                          warmup=warmup, iterations=iterations)
+        flops_mm = 2 * M**3  # 2N³ for matrix multiply
+        bytes_mm = 3 * M**2 * 2  # 3 matrices, 2 bytes (FP16)
+        ai_mm = analyzer.calculate_ai(flops_mm, bytes_mm)
+        achieved_tflops_mm = (flops_mm / time_mm) / 1e12
+
+        results.append({
+            'name': f'MatMul ({M})',
+            'ai': ai_mm,
+            'achieved_tflops': achieved_tflops_mm,
+            'time_ms': time_mm * 1000
+        })
+
     return results
 
 
@@ -325,6 +342,8 @@ def main():
     print("ROOFLINE ANALYSIS FOR NVIDIA B200")
     print("="*80)
     print()
+    if ROOFLINE_QUICK:
+        print("Running in quick mode (ROOFLINE_QUICK=1). Workloads scaled down for rapid validation.\n")
     
     # Initialize analyzer
     analyzer = RooflineAnalyzer(
@@ -333,8 +352,8 @@ def main():
     )
     
     # Check CUDA availability
-    if not torch.cuda.is_available():
-        print("❌ CUDA not available!")
+    if not cuda_ready():
+        print("ERROR: CUDA not available or unsupported! Skipping analysis.")
         return
     
     print(f"Using GPU: {torch.cuda.get_device_name(0)}\n")
@@ -353,7 +372,7 @@ def main():
     analyzer.plot_roofline(all_results)
     
     print("\n" + "="*80)
-    print("✅ Analysis complete! View roofline_analysis.png for visualization.")
+    print("[OK] Analysis complete! View roofline_analysis.png for visualization.")
     print("="*80)
 
 

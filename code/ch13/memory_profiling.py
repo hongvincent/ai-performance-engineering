@@ -1,19 +1,22 @@
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
+from contextlib import nullcontext
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure architecture optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 from arch_config import ArchitectureConfig
-import torch.profiler as profiler
-from torch.profiler import profile, record_function, ProfilerActivity, schedule
-import torch.cuda.nvtx as nvtx
 import torch
 import torch.nn as nn
 import os
+from common.device_utils import get_preferred_device
 
 _ARCH_CFG = ArchitectureConfig()
 
@@ -38,10 +41,15 @@ def get_architecture_info():
 
 def demonstrate_memory_profiling():
     """Demonstrate PyTorch memory profiling capabilities."""
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
+    device_obj, cuda_err = get_preferred_device()
+    device = device_obj.type
+    cuda_ok = device == 'cuda' and cuda_err is None
+
+    if cuda_err:
+        print(f"WARNING: CUDA unavailable ({cuda_err}); running demo on CPU.")
+
     # Clear any existing allocations
-    if torch.cuda.is_available():
+    if cuda_ok:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
     
@@ -70,14 +78,14 @@ def demonstrate_memory_profiling():
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters())
     
-    if torch.cuda.is_available():
+    if cuda_ok:
         # Memory snapshot before training
         print("\nInitial memory state:")
         print(f"Allocated: {torch.cuda.memory_allocated() / 1e6:.1f} MB")
         print(f"Reserved: {torch.cuda.memory_reserved() / 1e6:.1f} MB")
-        
+
         # Take memory snapshot
-        torch.cuda.memory._record_memory_history(True)
+        torch.cuda.memory._record_memory_history(max_entries=200000)
     
     # Training loop with memory tracking
     for epoch in range(2):
@@ -91,22 +99,22 @@ def demonstrate_memory_profiling():
         loss.backward()
         optimizer.step()
         
-        if torch.cuda.is_available():
+        if cuda_ok:
             print(f"\nEpoch {epoch + 1}:")
             print(f"Allocated: {torch.cuda.memory_allocated() / 1e6:.1f} MB")
             print(f"Reserved: {torch.cuda.memory_reserved() / 1e6:.1f} MB")
             print(f"Peak allocated: {torch.cuda.max_memory_allocated() / 1e6:.1f} MB")
-    
-    if torch.cuda.is_available():
+
+    if cuda_ok:
         # Memory snapshot
-        snapshot = torch.cuda.memory._snapshot()
-        print(f"\nMemory snapshot contains {len(snapshot)} entries")
+        torch.cuda.memory._dump_snapshot("memory_snapshot.json")
+        snapshot = torch.cuda.memory.memory_snapshot()
+        print(f"\nMemory snapshot contains {len(snapshot)} records")
         
-        # Note: You can save this snapshot and load it into PyTorch memory visualizer
-        # torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+        # Load memory_snapshot.json in https://pytorch.org/memory_viz for interactive analysis
         
         # Stop recording
-        torch.cuda.memory._record_memory_history(False)
+        torch.cuda.memory._record_memory_history(enabled=None)
         
         # Detailed memory stats
         memory_stats = torch.cuda.memory_stats()
@@ -119,9 +127,14 @@ def demonstrate_memory_profiling():
 def demonstrate_memory_optimization():
     """Show memory optimization techniques."""
     print("\n=== Memory Optimization Techniques ===")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
+
+    device_obj, cuda_err = get_preferred_device()
+    device = device_obj.type
+    cuda_ok = device == 'cuda' and cuda_err is None
+
+    if cuda_err:
+        print(f"WARNING: CUDA unavailable ({cuda_err}); running on CPU.")
+
     # 1. Gradient Checkpointing
     class CheckpointModel(nn.Module):
         def __init__(self):
@@ -129,80 +142,81 @@ def demonstrate_memory_optimization():
             self.layers = nn.ModuleList([
                 nn.Linear(512, 512) for _ in range(5)
             ])
-            
+
         def forward(self, x):
             for layer in self.layers:
                 # Use checkpoint to trade compute for memory
                 x = torch.utils.checkpoint.checkpoint(torch.relu, layer(x), use_reentrant=False)
             return x
-    
+
     print("1. Gradient Checkpointing:")
     model = CheckpointModel().to(device)
     x = torch.randn(16, 512, device=device, requires_grad=True)
-    
-    if torch.cuda.is_available():
+
+    if cuda_ok:
         torch.cuda.reset_peak_memory_stats()
-    
+
     y = model(x)
     loss = y.sum()
     loss.backward()
-    
-    if torch.cuda.is_available():
+
+    if cuda_ok:
         print(f"Peak memory with checkpointing: {torch.cuda.max_memory_allocated() / 1e6:.1f} MB")
-    
+
     # 2. Memory-efficient attention (scaled_dot_product_attention)
     print("\n2. Memory-efficient attention:")
-    
-    def efficient_attention_demo():
+
+    def efficient_attention_demo() -> None:
         batch_size, seq_len, embed_dim = 8, 256, 256
-        
+
         query = torch.randn(batch_size, seq_len, embed_dim, device=device)
         key = torch.randn(batch_size, seq_len, embed_dim, device=device)
         value = torch.randn(batch_size, seq_len, embed_dim, device=device)
-        
-        if torch.cuda.is_available():
+
+        if cuda_ok:
             torch.cuda.reset_peak_memory_stats()
-        
-        # Use PyTorch's memory-efficient attention
-        if hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
-            result = torch.nn.functional.scaled_dot_product_attention(
+
+        if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+            _ = torch.nn.functional.scaled_dot_product_attention(
                 query, key, value, is_causal=True
             )
-            if torch.cuda.is_available():
+            if cuda_ok:
                 print(f"Memory-efficient attention peak: {torch.cuda.max_memory_allocated() / 1e6:.1f} MB")
         else:
             print("scaled_dot_product_attention not available in this PyTorch version")
-    
+
     efficient_attention_demo()
-    
+
     # 3. Mixed precision
     print("\n3. Mixed precision training:")
-    
-    def mixed_precision_demo():
+
+    def mixed_precision_demo() -> None:
         model = nn.Linear(512, 512).to(device)
         optimizer = torch.optim.Adam(model.parameters())
-        scaler = torch.amp.GradScaler('cuda')
-        
+        scaler = torch.cuda.amp.GradScaler(enabled=cuda_ok)
+
         x = torch.randn(16, 512, device=device)
         target = torch.randn(16, 512, device=device)
-        
-        if torch.cuda.is_available():
+
+        if cuda_ok:
             torch.cuda.reset_peak_memory_stats()
-        
+
         optimizer.zero_grad()
-        
-        # Use autocast for mixed precision
-        with torch.amp.autocast('cuda'):
+        autocast_ctx = torch.cuda.amp.autocast() if cuda_ok else nullcontext()
+
+        with autocast_ctx:
             output = model(x)
             loss = nn.functional.mse_loss(output, target)
-        
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        
-        if torch.cuda.is_available():
+
+        if cuda_ok:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             print(f"Mixed precision peak memory: {torch.cuda.max_memory_allocated() / 1e6:.1f} MB")
-    
+        else:
+            loss.backward()
+            optimizer.step()
+
     mixed_precision_demo()
 
 def demonstrate_pytorch_29_memory_features():

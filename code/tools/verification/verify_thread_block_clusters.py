@@ -136,7 +136,7 @@ def main() -> int:
             print("  ✗ Thread-block cluster launch not supported.")
             failures.append(ordinal)
         else:
-            print("  ✓ Thread-block cluster launch supported.")
+            print("  Thread-block cluster launch supported.")
         print()
 
     if failures:

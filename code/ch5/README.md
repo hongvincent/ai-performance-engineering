@@ -8,12 +8,12 @@ Even the fastest GPU training can be bottlenecked by slow data loading. This cha
 
 After completing this chapter, you can:
 
-- ✅ Identify IO bottlenecks using profiling
-- ✅ Implement GPUDirect Storage (GDS) for direct storage-to-GPU transfers
-- ✅ Optimize PyTorch DataLoader for maximum throughput
-- ✅ Apply prefetching and caching strategies
-- ✅ Measure and eliminate IO wait time
-- ✅ Configure storage systems for GPU workloads
+- [OK] Identify IO bottlenecks using profiling
+- [OK] Implement GPUDirect Storage (GDS) for direct storage-to-GPU transfers
+- [OK] Optimize PyTorch DataLoader for maximum throughput
+- [OK] Apply prefetching and caching strategies
+- [OK] Measure and eliminate IO wait time
+- [OK] Configure storage systems for GPU workloads
 
 ## Prerequisites
 
@@ -97,7 +97,7 @@ GPU utilization: 45%
 
 Configuration: 8 workers, prefetch=2
 Data loading time: 120 ms/batch
-GPU utilization: 92% ✅
+GPU utilization: 92% [OK]
 ```
 
 **Speedup**: **7x faster** data loading, **2x higher** GPU utilization.
@@ -124,7 +124,7 @@ NVMe SSD → GPU directly  (1 copy, no CPU involvement)
 - NVMe SSD with GDS support
 - NVIDIA GPUDirect Storage drivers
 - cuFile library
-- B200/GB200 (or A100/H100 with compatible drivers)
+- NVIDIA GPU (or A100/H100 with compatible drivers)
 
 **Benefits**:
 - **2-3x faster** for large sequential reads
@@ -132,11 +132,11 @@ NVMe SSD → GPU directly  (1 copy, no CPU involvement)
 - **Lower latency** (eliminates memory copies)
 
 **When to use**:
-- ✅ Large files (>10 MB) - amortizes cuFile overhead
-- ✅ Sequential access patterns
-- ✅ High-throughput workloads (video processing, medical imaging)
-- ❌ Small random reads (overhead too high)
-- ❌ If storage is slower than PCIe (defeats purpose)
+- [OK] Large files (>10 MB) - amortizes cuFile overhead
+- [OK] Sequential access patterns
+- [OK] High-throughput workloads (video processing, medical imaging)
+- ERROR: Small random reads (overhead too high)
+- ERROR: If storage is slower than PCIe (defeats purpose)
 
 **How to run**:
 ```bash
@@ -159,7 +159,7 @@ Traditional IO (CPU path):
 
 GPUDirect Storage:
   Read 1 GB: 170 ms
-  Throughput: 5.9 GB/s ✅
+  Throughput: 5.9 GB/s [OK]
   CPU usage: 5%
 
 Speedup: 2.6x, CPU freed for other work!
@@ -287,7 +287,7 @@ dataloader = DataLoader(
 num_workers = num_CPU_cores / num_GPUs
 ```
 
-**Example for 8x B200 with 64-core CPU**:
+**Example for 8x NVIDIA GPU with 64-core CPU**:
 ```
 num_workers = 64 / 8 = 8 workers per GPU
 ```
@@ -470,6 +470,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, NVMe Gen4 SSD, PyTorch 2.9
+**Chapter Status**: [OK] Complete
+
