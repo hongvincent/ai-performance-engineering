@@ -26,14 +26,18 @@ Requirements:
 - torch._scaled_mm support
 
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import torch
@@ -262,19 +266,32 @@ class FP6MLP(nn.Module):
     Suitable for transformer FFN layers with 50% memory savings.
     """
     
-    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1,
-                 dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int,
+        dropout: float = 0.1,
+        dtype: torch.dtype = torch.float16,
+        *,
+        use_fp6: bool = True,
+    ):
         super().__init__()
         
-        self.fc1 = FP6Linear(d_model, d_ff, dtype=dtype)
-        self.fc2 = FP6Linear(d_ff, d_model, dtype=dtype)
+        self.use_fp6 = use_fp6
+        if use_fp6:
+            self.fc1 = FP6Linear(d_model, d_ff, dtype=dtype)
+            self.fc2 = FP6Linear(d_ff, d_model, dtype=dtype)
+        else:
+            self.fc1 = nn.Linear(d_model, d_ff, bias=True, dtype=dtype)
+            self.fc2 = nn.Linear(d_ff, d_model, bias=True, dtype=dtype)
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.GELU()
     
     def quantize(self):
         """Quantize all layers to FP6."""
-        self.fc1.quantize()
-        self.fc2.quantize()
+        for layer in (self.fc1, self.fc2):
+            if hasattr(layer, "quantize"):
+                layer.quantize()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with FP6 weights."""
@@ -283,6 +300,18 @@ class FP6MLP(nn.Module):
         x = self.dropout(x)
         x = self.fc2(x)
         return x
+
+
+def _layer_total_bytes(layer: nn.Module) -> Tuple[int, dict]:
+    if hasattr(layer, "memory_usage"):
+        stats = layer.memory_usage()
+        return int(stats["total_bytes"]), stats
+    weight = layer.weight
+    bias = layer.bias
+    total = weight.numel() * weight.element_size()
+    if bias is not None:
+        total += bias.numel() * bias.element_size()
+    return total, {"total_bytes": total}
 
 
 # ============================================================================
@@ -311,6 +340,14 @@ def benchmark_fp6_vs_fp16():
     seq_len = 512
     d_model = 2048
     d_ff = 8192
+    warmup_iters = 10 if torch.cuda.is_available() else 2
+    benchmark_iters = 100 if torch.cuda.is_available() else 5
+
+    if not torch.cuda.is_available():
+        batch_size = min(batch_size, 16)
+        seq_len = min(seq_len, 256)
+        d_model = min(d_model, 1024)
+        d_ff = min(d_ff, 4096)
     
     print(f"\nConfiguration:")
     print(f"  Batch size: {batch_size}")
@@ -327,21 +364,25 @@ def benchmark_fp6_vs_fp16():
     print("\n" + "=" * 80)
     print("FP16 Baseline")
     print("=" * 80)
-    mlp_fp16 = FP6MLP(d_model, d_ff, dtype=dtype).to(device)
+    mlp_fp16 = FP6MLP(d_model, d_ff, dtype=dtype, use_fp6=False).to(device)
     
     # Warmup
-    for _ in range(10):
+    for _ in range(warmup_iters):
         _ = mlp_fp16(x)
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     
     # Benchmark
     start = time.time()
-    for _ in range(100):
+    for _ in range(benchmark_iters):
         output_fp16 = mlp_fp16(x)
-    torch.cuda.synchronize()
-    time_fp16 = (time.time() - start) / 100
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    time_fp16 = (time.time() - start) / benchmark_iters
     
-    mem_fp16 = torch.cuda.memory_allocated() / 1024**2
+    mem_fp16 = torch.cuda.memory_allocated() / 1024**2 if torch.cuda.is_available() else (
+        sum(p.numel() * p.element_size() for p in mlp_fp16.parameters()) / 1024**2
+    )
     
     print(f"  Latency: {time_fp16 * 1000:.2f} ms")
     print(f"  Memory: {mem_fp16:.2f} MB")
@@ -351,22 +392,26 @@ def benchmark_fp6_vs_fp16():
     print("\n" + "=" * 80)
     print("FP6 Quantized")
     print("=" * 80)
-    mlp_fp6 = FP6MLP(d_model, d_ff, dtype=dtype).to(device)
+    mlp_fp6 = FP6MLP(d_model, d_ff, dtype=dtype, use_fp6=True).to(device)
     mlp_fp6.quantize()
     
     # Warmup
-    for _ in range(10):
+    for _ in range(warmup_iters):
         _ = mlp_fp6(x)
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     
     # Benchmark
     start = time.time()
-    for _ in range(100):
+    for _ in range(benchmark_iters):
         output_fp6 = mlp_fp6(x)
-    torch.cuda.synchronize()
-    time_fp6 = (time.time() - start) / 100
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    time_fp6 = (time.time() - start) / benchmark_iters
     
-    mem_fp6 = torch.cuda.memory_allocated() / 1024**2
+    mem_fp6 = torch.cuda.memory_allocated() / 1024**2 if torch.cuda.is_available() else (
+        sum(p.numel() * p.element_size() for p in mlp_fp6.parameters()) / 1024**2
+    )
     
     print(f"  Latency: {time_fp6 * 1000:.2f} ms")
     print(f"  Memory: {mem_fp6:.2f} MB")
@@ -386,30 +431,30 @@ def benchmark_fp6_vs_fp16():
     print(f"  Relative error: {rel_error * 100:.2f}%")
     
     # Memory breakdown
-    mem_stats_fp16 = mlp_fp16.fc1.memory_usage()
-    mem_stats_fp6 = mlp_fp6.fc1.memory_usage()
+    fp16_bytes, mem_stats_fp16 = _layer_total_bytes(mlp_fp16.fc1)
+    fp6_bytes, mem_stats_fp6 = _layer_total_bytes(mlp_fp6.fc1)
     
     print("\n" + "=" * 80)
     print("Memory Breakdown (FC1 layer)")
     print("=" * 80)
-    print(f"  FP16 weights: {mem_stats_fp16['total_bytes'] / 1024**2:.2f} MB")
-    print(f"  FP6 weights:  {mem_stats_fp6['total_bytes'] / 1024**2:.2f} MB")
-    print(f"  Compression: {mem_stats_fp16['total_bytes'] / mem_stats_fp6['total_bytes']:.2f}x")
+    print(f"  FP16 weights: {fp16_bytes / 1024**2:.2f} MB")
+    print(f"  FP6 weights:  {fp6_bytes / 1024**2:.2f} MB")
+    print(f"  Compression: {fp16_bytes / fp6_bytes:.2f}x")
     
     print("\n" + "=" * 80)
     print("Summary")
     print("=" * 80)
     print("FP6 Benefits on Blackwell B200:")
-    print("  ✓ 50% memory savings vs FP16 (2x model capacity)")
-    print("  ✓ 25% memory savings vs FP8 (1.33x model capacity)")
-    print(f"  ✓ {time_fp16 / time_fp6:.2f}x speedup from reduced memory bandwidth")
-    print("  ✓ ~12.5% relative error (acceptable for most tasks)")
-    print("  ✓ Native tensor core support on Blackwell")
+    print("  50% memory savings vs FP16 (2x model capacity)")
+    print("  25% memory savings vs FP8 (1.33x model capacity)")
+    print(f"  {time_fp16 / time_fp6:.2f}x speedup from reduced memory bandwidth")
+    print("  ~12.5% relative error (acceptable for most tasks)")
+    print("  Native tensor core support on Blackwell")
     
     if is_blackwell():
-        print("\n✅ Running on Blackwell - FP6 tensor cores active!")
+        print("\n[OK] Running on Blackwell - FP6 tensor cores active!")
     else:
-        print("\n⚠️  Not running on Blackwell - performance may be suboptimal")
+        print("\nWARNING: Not running on Blackwell - performance may be suboptimal")
 
 
 def test_fp6_accuracy():
@@ -458,19 +503,17 @@ if __name__ == "__main__":
     print("=" * 80)
     
     # Check device
-    if not torch.cuda.is_available():
-        print("❌ CUDA not available")
-        exit(1)
-    
-    props = torch.cuda.get_device_properties(0)
-    print(f"\nGPU: {props.name}")
-    print(f"Compute Capability: {props.major}.{props.minor}")
-    print(f"Blackwell: {'YES ✓' if is_blackwell() else 'NO'}")
-    
-    if not is_blackwell():
-        print("\n⚠️  Warning: Not running on Blackwell B200/B300")
-        print("FP6 is optimized for Blackwell's tensor cores.")
-        print("Performance may be suboptimal on other architectures.")
+    if torch.cuda.is_available():
+        props = torch.cuda.get_device_properties(0)
+        print(f"\nGPU: {props.name}")
+        print(f"Compute Capability: {props.major}.{props.minor}")
+        print(f"Blackwell: {'YES ' if is_blackwell() else 'NO'}")
+        if not is_blackwell():
+            print("\nWARNING: Warning: Not running on Blackwell B200/B300")
+            print("FP6 is optimized for Blackwell's tensor cores.")
+            print("Performance may be suboptimal on other architectures.")
+    else:
+        print("\nWARNING: CUDA not available - running FP6 demo with CPU emulation for validation purposes.")
     
     # Run tests
     test_fp6_accuracy()

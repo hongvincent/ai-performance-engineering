@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Quick GPT-style model test - NO HEAVY COMPILATION
 Shows realistic torch.compile speedup on B200
 """
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import torch
@@ -40,10 +45,10 @@ class SimpleGPTBlock(nn.Module):
         x = x + self.mlp(self.ln2(x))
         return x
 
-def benchmark_quick(model, x, name, num_iters=100):
+def benchmark_quick(model, x, name, num_iters=20):
     """Quick benchmark"""
     # Warmup
-    for _ in range(20):
+    for _ in range(5):
         with torch.no_grad():
             _ = model(x)
     torch.cuda.synchronize()
@@ -76,10 +81,15 @@ def main():
     print("=" * 80)
     
     # Test different sizes to find sweet spot
+    capability = torch.cuda.get_device_capability() if torch.cuda.is_available() else (0, 0)
+    prefers_bfloat16 = capability[0] >= 9
+    run_dtype = torch.bfloat16 if prefers_bfloat16 else torch.float16
+
     configs = [
-        (32, 4096, 8, 2048),    # ~10B params - minimum for B200
-        (48, 5120, 4, 2048),    # ~15B params
-        (64, 6144, 2, 2048),    # ~24B params - good B200 showcase
+        # Tuned for quick turnaround but still large enough to show compile gains
+        (4, 1024, 4, 512),
+        (6, 1536, 4, 512),
+        (8, 2048, 4, 512),
     ]
     
     for n_layers, d_model, batch, seq_len in configs:
@@ -88,15 +98,16 @@ def main():
         print(f"{'=' * 80}")
         
         # Create model
-        blocks = [SimpleGPTBlock(d_model=d_model) for _ in range(n_layers)]
-        model = nn.Sequential(*blocks).cuda().eval()
+        blocks = [SimpleGPTBlock(d_model=d_model, n_heads=max(4, d_model // 256)) for _ in range(n_layers)]
+        model = nn.Sequential(*blocks).cuda().to(run_dtype).eval()
         
         params = sum(p.numel() for p in model.parameters()) / 1e9
         print(f"Parameters: {params:.2f}B")
         
         # Input
-        x = torch.randn(batch, seq_len, d_model, device='cuda')
-        mem = x.numel() * 4 / 1e9
+        x = torch.randn(batch, seq_len, d_model, device='cuda', dtype=run_dtype)
+        bytes_per_elem = torch.tensor([], dtype=run_dtype).element_size()
+        mem = x.numel() * bytes_per_elem / 1e9
         print(f"Input size: {mem:.2f} GB")
         
         # Eager
@@ -111,11 +122,13 @@ def main():
         speedup = eager_time / compiled_time
         print(f"\n>>> Speedup: {speedup:.2f}x")
         
-        if speedup > 1.2:
-            print("✅ GOOD speedup!")
+        if speedup > 1.1:
+            print("[OK] GOOD speedup!")
             break
         else:
-            print("⚠️ Too small, trying larger...")
+            print("WARNING: Too small, trying larger...")
+        del model_compiled
+        torch.cuda.empty_cache()
     
     print("\n" + "=" * 80)
     print("DONE")

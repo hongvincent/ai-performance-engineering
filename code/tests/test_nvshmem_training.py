@@ -55,6 +55,11 @@ def _pipeline_worker(rank: int, world_size: int, seq_len: int, port: int) -> Non
 
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed not available")
 def test_gradient_bucket_demo_runs_on_gloo():
+    from ch4.nvshmem_training_example import nvshmem_available
+
+    if not nvshmem_available() or torch.cuda.device_count() < 2:
+        pytest.skip("NVSHMEM/symmetric memory unavailable or insufficient GPUs")
+
     world_size = 2
     port = _find_free_port()
     os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -63,6 +68,11 @@ def test_gradient_bucket_demo_runs_on_gloo():
 
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed not available")
 def test_pipeline_demo_runs_on_gloo():
+    from ch4.nvshmem_training_example import nvshmem_available
+
+    if not nvshmem_available() or torch.cuda.device_count() < 2:
+        pytest.skip("NVSHMEM/symmetric memory unavailable or insufficient GPUs")
+
     world_size = 2
     port = _find_free_port()
     os.environ["MASTER_ADDR"] = "127.0.0.1"

@@ -5,8 +5,8 @@ include ../common/cuda_arch.mk
 NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) -lineinfo -Xptxas=-v
 SUFFIX = $(TARGET_SUFFIX)
 
-CUDA_SOURCES = $(wildcard *.cu)
-BASE_TARGETS = $(CUDA_SOURCES:.cu=)
+# Explicit list of CUDA examples
+BASE_TARGETS = baseline_add optimized_add_parallel baseline_coalescing_uncoalesced optimized_coalescing baseline_bank_conflicts optimized_bank_conflicts baseline_ilp optimized_ilp baseline_launch_bounds optimized_launch_bounds
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
 .PHONY: all clean test compare blackwell grace-blackwell profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS)
@@ -16,8 +16,35 @@ all: $(TARGETS)
 	@echo "✓ Targeting $(ARCH_NAME)"
 	@echo "✓ Built $(words $(BASE_TARGETS)) CUDA examples"
 
-$(TARGETS): %$(SUFFIX): %.cu
-	@echo "Compiling $@..."
+# Explicit build rules for each example
+baseline_add$(SUFFIX): baseline_add.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+optimized_add_parallel$(SUFFIX): optimized_add_parallel.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+baseline_coalescing_uncoalesced$(SUFFIX): baseline_coalescing_uncoalesced.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+optimized_coalescing$(SUFFIX): optimized_coalescing.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+baseline_bank_conflicts$(SUFFIX): baseline_bank_conflicts.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+optimized_bank_conflicts$(SUFFIX): optimized_bank_conflicts.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+baseline_ilp$(SUFFIX): baseline_ilp.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+optimized_ilp$(SUFFIX): optimized_ilp.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+baseline_launch_bounds$(SUFFIX): baseline_launch_bounds.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+
+optimized_launch_bounds$(SUFFIX): optimized_launch_bounds.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
 
 test: all

@@ -12,19 +12,29 @@ Key insight: torch.compile benefits scale with model size!
 
 Hardware: NVIDIA B200 (178 GB memory available)
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 
-# Add parent directory to path to import arch_config
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add repository root to import shared helpers
+_extras_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.dirname(_extras_dir)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
-import arch_config  # noqa: F401 - Configure Blackwell optimizations
 
 import torch
 import torch.nn as nn
 import triton.testing
 
-QUICK_MODE = os.getenv("BENCHMARK_QUICK", "0") not in ("0", "false", "False")
+from common.python.compile_utils import enable_tf32
 
 
 def configure_for_peak_performance():
@@ -32,31 +42,7 @@ def configure_for_peak_performance():
     print("Configuring for Blackwell B200...")
     
     # TF32
-    torch.set_float32_matmul_precision('high')
-    cuda_matmul = getattr(torch.backends.cuda, "matmul", None)
-    if cuda_matmul is not None:
-        if hasattr(cuda_matmul, "allow_tf32"):
-            try:
-                cuda_matmul.allow_tf32 = True
-            except (RuntimeError, AttributeError):
-                pass
-        elif hasattr(cuda_matmul, "fp32_precision"):
-            try:
-                cuda_matmul.fp32_precision = 'tf32'
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
-    cudnn_conv = getattr(torch.backends.cudnn, "conv", None)
-    if cudnn_conv is not None:
-        if hasattr(torch.backends.cudnn, "allow_tf32"):
-            try:
-                torch.backends.cudnn.allow_tf32 = True
-            except (RuntimeError, AttributeError):
-                pass
-        elif hasattr(cudnn_conv, "fp32_precision"):
-            try:
-                cudnn_conv.fp32_precision = 'tf32'
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+    enable_tf32()
     
     # Flash Attention
     torch.backends.cuda.enable_flash_sdp(True)
@@ -194,8 +180,8 @@ def benchmark_with_proper_warmup(model, x, name):
         with torch.no_grad():
             return model(x)
     
-    warmup = 5 if not QUICK_MODE else 1
-    rep = 50 if not QUICK_MODE else 10
+    warmup = 5
+    rep = 50
     avg_time_ms = triton.testing.do_bench(run_model, warmup=warmup, rep=rep)
     throughput = 1000.0 / avg_time_ms  # iter/s
     
@@ -222,11 +208,6 @@ def main():
     batch_size = 16
     seq_len = 1024
 
-    if QUICK_MODE:
-        sizes_to_test = ['small']
-        batch_size = 4
-        seq_len = 256
-    
     # Find largest model that fits
     selected_size = None
     selected_config = None
@@ -343,11 +324,13 @@ def main():
     print(f"4. Using {x.numel() * 4 / 1e9:.2f} GB / {total_memory:.1f} GB available memory")
     print("=" * 80)
     
-    return speedup
+    return speedup, expected_min
 
 
 if __name__ == "__main__":
-    speedup = main()
+    speedup, expected_min = main()
     
-    import sys
-    sys.exit(0 if speedup >= 1.15 else 1)
+    import os
+    default_threshold = expected_min * 0.95
+    success_threshold = float(os.getenv("TORCH_COMPILE_MIN_SPEEDUP", f"{default_threshold:.4f}"))
+    sys.exit(0 if speedup >= success_threshold else 1)

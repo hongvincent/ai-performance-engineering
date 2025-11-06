@@ -1,14 +1,18 @@
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """Adaptive parallelism routing demo (Chapter 19)."""
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import logging
@@ -16,7 +20,17 @@ import random
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
+
+try:
+    import pynvml  # type: ignore
+
+    _NVML_AVAILABLE = True
+    _NVML_INITIALIZED = False
+except Exception:  # pragma: no cover - NVML optional on dev machines
+    pynvml = None  # type: ignore[assignment]
+    _NVML_AVAILABLE = False
+    _NVML_INITIALIZED = False
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -37,6 +51,8 @@ class WorkloadMetrics:
     concurrent_reqs: int
     avg_latency_ms: float
     throughput_tokens: float
+    prefill_tokens: int = 0
+    decode_tokens: int = 0
 
 
 @dataclass
@@ -64,10 +80,14 @@ class DynamicParallelismRouter:
         }
 
     def choose(self, metrics: WorkloadMetrics) -> ParallelismStrategy:
-        if metrics.concurrent_reqs > 32 and metrics.seq_len <= 256:
+        long_prefill = metrics.prefill_tokens > 0 and metrics.prefill_tokens >= metrics.decode_tokens * 2
+        steady_decode = metrics.decode_tokens > 0 and metrics.decode_tokens <= 256
+        if metrics.concurrent_reqs > 32 and steady_decode:
             return ParallelismStrategy.DATA
-        if metrics.seq_len > 1024 or metrics.gpu_mem_util > 0.8:
-            return ParallelismStrategy.PIPELINE if metrics.seq_len > 2048 else ParallelismStrategy.HYBRID
+        if metrics.seq_len > 1024 or metrics.gpu_mem_util > 0.85 or long_prefill:
+            if metrics.seq_len > 4096 or metrics.gpu_mem_util > 0.92:
+                return ParallelismStrategy.PIPELINE
+            return ParallelismStrategy.HYBRID
         return ParallelismStrategy.TENSOR
 
     def score(self, metrics: WorkloadMetrics, strategy: ParallelismStrategy) -> float:
@@ -103,6 +123,8 @@ class DynamicParallelismRouter:
 def collect_metrics() -> WorkloadMetrics:
     seq_len = random.choice([128, 256, 512, 1024, 2048, 4096])
     load = random.uniform(0.3, 0.9)
+    prefill_tokens = seq_len
+    decode_tokens = random.randint(32, 256)
     return WorkloadMetrics(
         seq_len=seq_len,
         batch_size=random.randint(4, 32),
@@ -110,6 +132,8 @@ def collect_metrics() -> WorkloadMetrics:
         concurrent_reqs=int(load * 50),
         avg_latency_ms=60 + load * 90,
         throughput_tokens=1100 * (2.0 - load),
+        prefill_tokens=prefill_tokens,
+        decode_tokens=decode_tokens,
     )
 
 
@@ -142,6 +166,63 @@ def main() -> None:
     router = DynamicParallelismRouter(gpus=8)
     print("Chapter 19: Adaptive parallelism demo")
     simulate(router)
+
+
+_DEFAULT_ROUTER = DynamicParallelismRouter(gpus=8)
+
+
+def telemetry_gpu_mem_util(default: float = 0.0, device_index: int = 0) -> float:
+    """Optional NVML-backed memory utilisation fraction."""
+    global _NVML_INITIALIZED
+    if not _NVML_AVAILABLE:
+        return default
+    try:
+        if not _NVML_INITIALIZED:
+            pynvml.nvmlInit()  # type: ignore[attr-defined]
+            _NVML_INITIALIZED = True
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)  # type: ignore[attr-defined]
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore[attr-defined]
+        return max(default, util.memory / 100.0)
+    except Exception:
+        return default
+
+
+def choose_worker_pool(
+    seq_len: int,
+    gpu_mem_util: float,
+    concurrent_reqs: int,
+    *,
+    batch_size: int = 1,
+    prefill_tokens: int = 0,
+    decode_tokens: int = 0,
+    telemetry_fn: Optional[Callable[[], float]] = None,
+) -> StrategyConfig:
+    """
+    Return StrategyConfig matching the book's decision function.
+
+    Args:
+        seq_len: Prompt sequence length.
+        gpu_mem_util: Current GPU memory utilisation (0.0 - 1.0).
+        concurrent_reqs: Outstanding decoding requests.
+        batch_size: Batch size for the new request.
+        prefill_tokens: Estimated tokens processed during prefill.
+        decode_tokens: Estimated tokens for decode phase.
+        telemetry_fn: Optional callable returning live GPU memory utilisation.
+    """
+    live_util = telemetry_fn() if telemetry_fn is not None else None
+    util = float(live_util) if live_util is not None else gpu_mem_util
+    metrics = WorkloadMetrics(
+        seq_len=seq_len,
+        batch_size=batch_size,
+        gpu_mem_util=util,
+        concurrent_reqs=concurrent_reqs,
+        avg_latency_ms=80.0,
+        throughput_tokens=1200.0,
+        prefill_tokens=prefill_tokens if prefill_tokens else seq_len,
+        decode_tokens=decode_tokens if decode_tokens else max(128, seq_len // 4),
+    )
+    strategy = _DEFAULT_ROUTER.choose(metrics)
+    return _DEFAULT_ROUTER.profiles[strategy]
 
 
 if __name__ == "__main__":

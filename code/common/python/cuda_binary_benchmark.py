@@ -1,0 +1,199 @@
+"""Utilities for wrapping standalone CUDA binaries in the benchmark harness.
+
+The chapter Makefiles build architecture-specific executables such as
+``baseline_hbm3e_copy_sm100``. This helper compiles the requested binary (if
+needed) and measures it by launching the executable from Python so the result
+can participate in the standardized harness / metrics pipeline.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Sequence
+
+import torch
+
+from common.python.benchmark_harness import Benchmark, BenchmarkConfig
+
+ARCH_SUFFIX = {
+    "sm_100": "_sm100",
+    "sm_103": "_sm103",
+    "sm_121": "_sm121",
+}
+
+
+def _env_arch_override() -> Optional[str]:
+    """Return architecture override from environment if present."""
+    for key in ("AIPERF_ARCH", "CHAPTER_ARCH", "CUDA_BENCH_ARCH"):
+        value = os.getenv(key)
+        if value and value in ARCH_SUFFIX:
+            return value
+    return None
+
+
+def detect_supported_arch() -> str:
+    """Infer the CUDA architecture for building binaries.
+    
+    Prefers explicit environment overrides, otherwise uses the active GPU's
+    compute capability. Only architectures supported by chapter Makefiles are
+    returned.
+    """
+    override = _env_arch_override()
+    if override:
+        return override
+    
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA device required to benchmark CUDA binaries")
+    
+    major, minor = torch.cuda.get_device_capability()
+    capability = major * 10 + minor
+    if capability >= 121:
+        return "sm_121"
+    if capability >= 103:
+        return "sm_103"
+    if capability >= 100:
+        return "sm_100"
+    
+    raise RuntimeError(
+        f"Unsupported compute capability {major}.{minor}. "
+        f"Set AIPERF_ARCH to one of {sorted(ARCH_SUFFIX)} to force compilation."
+    )
+
+
+@dataclass
+class BinaryRunResult:
+    """Holds metrics parsed from a CUDA binary execution."""
+    time_ms: Optional[float]
+    raw_stdout: str
+    raw_stderr: str
+
+
+class CudaBinaryBenchmark(Benchmark):
+    """Benchmark wrapper that builds and runs a CUDA executable."""
+    
+    def __init__(
+        self,
+        chapter_dir: Path,
+        binary_name: str,
+        friendly_name: str,
+        *,
+        iterations: int = 3,
+        warmup: int = 1,
+        timeout_seconds: int = 120,
+        run_args: Sequence[str] = (),
+        time_regex: Optional[str] = r"([0-9]+(?:\.[0-9]+)?)\s*ms",
+    ) -> None:
+        self.chapter_dir = chapter_dir
+        self.binary_name = binary_name
+        self.friendly_name = friendly_name
+        self.iterations = iterations
+        self.warmup = warmup
+        self.timeout_seconds = timeout_seconds
+        self.run_args = list(run_args)
+        self.time_pattern = re.compile(time_regex) if time_regex is not None else None
+        
+        self.arch: Optional[str] = None
+        self.exec_path: Optional[Path] = None
+        self._last_result: Optional[BinaryRunResult] = None
+    
+    # ------------------------------------------------------------------ Helper API
+    def _build_binary(self) -> None:
+        """Compile the requested CUDA binary if needed."""
+        self.arch = detect_supported_arch()
+        suffix = ARCH_SUFFIX[self.arch]
+        target = f"{self.binary_name}{suffix}"
+        build_cmd = ["make", f"ARCH={self.arch}", target]
+        
+        completed = subprocess.run(
+            build_cmd,
+            cwd=self.chapter_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"Failed to build {target} (arch={self.arch}).\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            )
+        
+        path = self.chapter_dir / target
+        if not path.exists():
+            raise FileNotFoundError(f"Built binary not found at {path}")
+        self.exec_path = path
+    
+    def _run_once(self) -> BinaryRunResult:
+        """Execute the compiled binary and parse its runtime."""
+        if self.exec_path is None:
+            raise RuntimeError("Executable path not set (build step missing)")
+        
+        completed = subprocess.run(
+            [str(self.exec_path), *self.run_args],
+            cwd=self.chapter_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"{self.exec_path.name} exited with code {completed.returncode}.\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            )
+        
+        match = self.time_pattern.search(completed.stdout) if self.time_pattern else None
+        if self.time_pattern and not match:
+            raise RuntimeError(
+                f"Could not parse execution time from output of {self.exec_path.name}.\n"
+                f"stdout:\n{completed.stdout}"
+            )
+        
+        time_ms = float(match.group(1)) if match else None
+        return BinaryRunResult(time_ms=time_ms, raw_stdout=completed.stdout, raw_stderr=completed.stderr)
+    
+    # ------------------------------------------------------------------ Benchmark API
+    def setup(self) -> None:
+        """Build the executable once before benchmarking."""
+        self._build_binary()
+    
+    def benchmark_fn(self) -> None:
+        """Launch the executable and record its runtime."""
+        self._last_result = self._run_once()
+    
+    def teardown(self) -> None:
+        """No runtime resources to release."""
+        pass
+    
+    def get_config(self) -> BenchmarkConfig:
+        """Configure harness to use CPU timers (subprocess measures wall time)."""
+        return BenchmarkConfig(
+            iterations=self.iterations,
+            warmup=self.warmup,
+            timeout_seconds=self.timeout_seconds,
+            device=torch.device("cpu"),
+            enable_memory_tracking=False,
+            enable_profiling=False,
+        )
+    
+    def validate_result(self) -> Optional[str]:
+        """Ensure we captured at least one timing measurement."""
+        if self._last_result is None:
+            return "Binary did not execute"
+        if self.time_pattern and (self._last_result.time_ms is None or self._last_result.time_ms <= 0):
+            return f"Invalid runtime parsed: {self._last_result.time_ms} ms"
+        return None
+    
+    # Convenience accessors -----------------------------------------------------
+    @property
+    def last_time_ms(self) -> Optional[float]:
+        return None if self._last_result is None else self._last_result.time_ms
+    
+    @property
+    def last_stdout(self) -> Optional[str]:
+        return None if self._last_result is None else self._last_result.raw_stdout

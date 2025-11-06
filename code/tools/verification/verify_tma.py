@@ -145,7 +145,7 @@ def main() -> int:
             print("  ✗ Driver reports no Tensor Map access support.")
             failures.append(ordinal)
         else:
-            print("  ✓ Tensor Memory Accelerator supported.")
+            print("  Tensor Memory Accelerator supported.")
         print()
 
     if failures:

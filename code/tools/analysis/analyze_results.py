@@ -65,7 +65,6 @@ def discover_all_result_directories(code_root: Path) -> List[Path]:
 def analyze_directory(
     directory: Path,
     output_path: Optional[Path] = None,
-    quick: bool = False,
     verbose: bool = False
 ) -> str:
     """
@@ -74,7 +73,6 @@ def analyze_directory(
     Args:
         directory: Path to results directory
         output_path: Optional path to write report
-        quick: If True, generate quick summary only
         verbose: If True, print detailed extraction info
     
     Returns:
@@ -116,7 +114,6 @@ def analyze_directory(
     report = generate_report_from_metrics(
         metrics,
         output_path=output_path,
-        quick=quick
     )
     
     if verbose and output_path:
@@ -137,9 +134,6 @@ Examples:
   
   # Analyze specific directory
   python tools/analyze_results.py --input test_results_20251028_063307
-  
-  # Generate quick summary
-  python tools/analyze_results.py --quick
   
   # Analyze all historical results
   python tools/analyze_results.py --all
@@ -162,12 +156,6 @@ Examples:
         "--output",
         type=Path,
         help="Output markdown file (default: stdout or input_dir/analysis.md)"
-    )
-    
-    parser.add_argument(
-        "--quick",
-        action="store_true",
-        help="Generate quick summary only (faster)"
     )
     
     parser.add_argument(
@@ -235,10 +223,9 @@ Examples:
                 analyze_directory(
                     directory,
                     output_path=output_path,
-                    quick=args.quick,
                     verbose=args.verbose
                 )
-                print(f"  ✓ Report written to: {output_path}")
+                print(f"  Report written to: {output_path}")
             except Exception as e:
                 print(f"  ✗ Error: {e}", file=sys.stderr)
             
@@ -268,8 +255,8 @@ Examples:
         if not output_path.is_absolute():
             output_path = code_root / output_path
     else:
-        if args.quick or sys.stdout.isatty():
-            # Quick mode or interactive: write to input directory
+        if sys.stdout.isatty():
+            # Interactive terminal: write to input directory
             output_path = directory / "analysis.md"
         else:
             # Non-interactive: stdout only
@@ -280,7 +267,6 @@ Examples:
         report = analyze_directory(
             directory,
             output_path=output_path,
-            quick=args.quick,
             verbose=args.verbose
         )
         
@@ -301,5 +287,4 @@ Examples:
 
 if __name__ == "__main__":
     sys.exit(main())
-
 

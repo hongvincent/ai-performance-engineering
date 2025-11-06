@@ -32,14 +32,18 @@ Usage:
     # Save results to file
     torchrun --nproc_per_node=8 bandwidth_benchmark_suite_8gpu.py --output results.json
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -49,7 +53,18 @@ except ImportError:
             os.environ.setdefault("WORLD_SIZE", "1")
             os.environ.setdefault("MASTER_ADDR", "localhost")
             os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+            os.environ.setdefault("LOCAL_RANK", "0")
+
+try:
+    from gpu_requirements import require_min_gpus, warn_optimal_gpu_count
+except ImportError:
+    def require_min_gpus(min_gpus, script_name=None):
+        import torch, sys
+        if torch.cuda.device_count() < min_gpus:
+            print(f"ERROR: This script requires {min_gpus} GPUs but only {torch.cuda.device_count()} available", file=sys.stderr)
+            sys.exit(1)
+    def warn_optimal_gpu_count(optimal_gpus, script_name=None):
+        pass
 
 
 import os
@@ -438,7 +453,7 @@ def visualize_topology(rank: int, world_size: int, bandwidth_matrix: Dict[Tuple[
     avg_bw = sum(bandwidths) / len(bandwidths)
     
     if avg_bw > 700:
-        print("  ✓ NVSwitch all-to-all topology detected")
+        print("  NVSwitch all-to-all topology detected")
         print("  → All GPUs have direct high-bandwidth connections")
         print("  → Optimal for: AllReduce, AllGather with NVLS")
     elif avg_bw > 400:
@@ -457,6 +472,10 @@ def visualize_topology(rank: int, world_size: int, bandwidth_matrix: Dict[Tuple[
 # ============================================================================
 
 def main():
+    # Check GPU requirements early - this script needs 8 GPUs
+    warn_optimal_gpu_count(8, "bandwidth_benchmark_suite_8gpu.py")
+    require_min_gpus(8, "bandwidth_benchmark_suite_8gpu.py")
+
     parser = argparse.ArgumentParser(description="8-GPU Bandwidth Benchmark Suite")
     parser.add_argument("--quick", action="store_true", help="Quick test (fewer sizes)")
     parser.add_argument("--full", action="store_true", help="Full benchmark suite")
@@ -513,7 +532,7 @@ def main():
             print(f"  Target: 700-800 GB/s")
             
             if allreduce_1gb['bandwidth_gbs'] >= 700:
-                print(f"  ✓ Target achieved!")
+                print(f"  Target achieved!")
             else:
                 efficiency = (allreduce_1gb['bandwidth_gbs'] / 750) * 100
                 print(f"  ⚠ {efficiency:.1f}% of target")

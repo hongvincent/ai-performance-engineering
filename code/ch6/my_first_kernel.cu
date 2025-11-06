@@ -21,19 +21,29 @@ int main() {
     h_data[i] = 1.0f;
   }
 
-  float* d_data;
-  cudaMalloc(&d_data, bytes);
-  cudaMemcpy(d_data, h_data, bytes, cudaMemcpyHostToDevice);
+  cudaStream_t stream;
+  cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+
+  float* d_data = nullptr;
+  cudaMallocAsync(&d_data, bytes, stream);
+  cudaMemcpyAsync(d_data, h_data, bytes, cudaMemcpyHostToDevice, stream);
 
   int block = 256;
   int grid = (N + block - 1) / block;
-  double_values<<<grid, block>>>(d_data, N);
-  cudaDeviceSynchronize();
+  double_values<<<grid, block, 0, stream>>>(d_data, N);
 
-  cudaMemcpy(h_data, d_data, bytes, cudaMemcpyDeviceToHost);
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "kernel launch failed: %s\n", cudaGetErrorString(err));
+    return 1;
+  }
+
+  cudaMemcpyAsync(h_data, d_data, bytes, cudaMemcpyDeviceToHost, stream);
+  cudaStreamSynchronize(stream);
   printf("First value: %.1f\n", h_data[0]);
 
-  cudaFree(d_data);
+  cudaFreeAsync(d_data, stream);
+  cudaStreamDestroy(stream);
   cudaFreeHost(h_data);
   return 0;
 }

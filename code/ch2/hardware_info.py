@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """Chapter 2: Hardware Topology Inspection
 
 Analyze CPU/GPU topology, memory bandwidth, and interconnect characteristics
 for NVIDIA Blackwell-based systems.
 """
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
 except Exception:  # pragma: no cover - optional per-environment tweak
     arch_config = None  # Graceful fallback if arch_config is absent
 
@@ -21,6 +29,8 @@ import GPUtil
 import psutil
 import torch
 import torch.cuda.nvtx as nvtx
+
+BENCHMARK_QUICK = os.environ.get("BENCHMARK_QUICK", "0") == "1"
 
 
 def get_architecture() -> str:
@@ -223,7 +233,7 @@ def benchmark_memory_bandwidth() -> None:
 
     print("\n=== Memory Bandwidth Benchmark ===")
 
-    copy_sizes_gb = [2, 4, 8]
+    copy_sizes_gb = [2] if BENCHMARK_QUICK else [2, 4, 8]
     for size_gb in copy_sizes_gb:
         size_bytes = int(size_gb * (1024 ** 3))
         num_elements = size_bytes // 2  # float16
@@ -233,7 +243,7 @@ def benchmark_memory_bandwidth() -> None:
 
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
-        iterations = 50
+        iterations = 5 if BENCHMARK_QUICK else 50
 
         start.record()
         for _ in range(iterations):
@@ -245,27 +255,29 @@ def benchmark_memory_bandwidth() -> None:
         bandwidth_gbps = (size_bytes * iterations / elapsed_ms) / 1e6
         print(f"Copy {size_gb:2d} GB: {bandwidth_gbps / 1024:.2f} TB/s")
 
-    sizes = [1024, 2048, 4096, 8192, 16384]
+    sizes = [1024, 4096] if BENCHMARK_QUICK else [1024, 2048, 4096, 8192, 16384]
 
     for size in sizes:
         try:
             a = torch.randn(size, size, device="cuda")
             b = torch.randn(size, size, device="cuda")
 
-            for _ in range(5):
+            warmup_iters = 2 if BENCHMARK_QUICK else 5
+            for _ in range(warmup_iters):
                 _ = torch.mm(a, b)
 
             torch.cuda.synchronize()
             start_time = time.time()
 
             with nvtx.range(f"gemm_{size}"):
-                for _ in range(10):
+                active_iters = 3 if BENCHMARK_QUICK else 10
+                for _ in range(active_iters):
                     _ = torch.mm(a, b)
 
             torch.cuda.synchronize()
             end_time = time.time()
 
-            avg_time = (end_time - start_time) / 10
+            avg_time = (end_time - start_time) / active_iters
             bytes_transferred = 2 * size * size * 4
             bandwidth_gbps = (bytes_transferred / avg_time) / 1e9
 
@@ -300,20 +312,22 @@ def benchmark_tensor_operations() -> None:
 
     for op_name, op_func in ops:
         try:
-            for _ in range(2):
+            warmup_iters = 1 if BENCHMARK_QUICK else 2
+            for _ in range(warmup_iters):
                 op_func(a, b)
 
             torch.cuda.synchronize()
             start_time = time.time()
 
             with nvtx.range(f"tensor_op_{op_name.lower().replace(' ', '_')}"):
-                for _ in range(10):
+                active_iters = 3 if BENCHMARK_QUICK else 10
+                for _ in range(active_iters):
                     op_func(a, b)
 
             torch.cuda.synchronize()
             end_time = time.time()
 
-            avg_time = (end_time - start_time) / 10
+            avg_time = (end_time - start_time) / active_iters
             print(f"{op_name:25}: {avg_time:.6f}s")
 
         except Exception as exc:

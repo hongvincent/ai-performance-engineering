@@ -313,6 +313,7 @@ class TestIntegration:
     """End-to-end integration tests"""
     
     @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
+    @pytest.mark.skipif(not FP8_AVAILABLE, reason="Transformer Engine not available")
     def test_optimized_decoder_layer(self):
         """Test complete optimized decoder layer"""
         device = "cuda"
@@ -401,11 +402,11 @@ class TestBlackwellFeatures:
         
         print(f"\nHBM3e bandwidth test:")
         print(f"  Achieved: {bandwidth_gbs:.1f} GB/s")
-        print(f"  Target: ~7800 GB/s (7.8 TB/s)")
-        print(f"  Utilization: {bandwidth_gbs / 7800 * 100:.1f}%")
+        print(f"  Target: ~8000 GB/s (8.0 TB/s)")
+        print(f"  Utilization: {bandwidth_gbs / 8000 * 100:.1f}%")
         
         # Assert reasonable bandwidth (at least 50% of peak)
-        # B200 HBM3e theoretical: 7.8 TB/s, expect > 3.9 TB/s achievable
+        # B200 HBM3e theoretical: ~8.0 TB/s; keep a conservative floor to avoid false negatives.
         assert bandwidth_gbs > 1200, f"Bandwidth too low: {bandwidth_gbs:.1f} GB/s"
 
 

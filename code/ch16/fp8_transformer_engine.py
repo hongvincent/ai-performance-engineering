@@ -9,6 +9,15 @@ without the compiled extension) and they provide convenience functions for
 replacing standard `nn.Linear` layers with TE equivalents as well as for entering
 the FP8 autocast region.
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 from __future__ import annotations
 

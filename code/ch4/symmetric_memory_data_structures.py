@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Distributed Data Structures with Symmetric Memory for 8x B200
 ============================================================
@@ -67,14 +77,9 @@ When NOT to Use:
 """
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -112,19 +117,22 @@ def symmetric_memory_available() -> bool:
 
 def init_distributed() -> Tuple[int, int, int]:
     """Initialize distributed process group."""
+    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
         local_rank = int(os.environ.get("LOCAL_RANK", rank))
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    dist.init_process_group(
+        
+        dist.init_process_group(
             backend="nccl",
             init_method="env://",
             rank=rank,
             world_size=world_size,
             timeout=datetime.timedelta(seconds=60),
         )
-    torch.cuda.set_device(local_rank)
+        torch.cuda.set_device(local_rank)
+        
     return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 
 

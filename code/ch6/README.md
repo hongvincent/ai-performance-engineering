@@ -8,18 +8,18 @@ This chapter introduces CUDA programming from the ground up. You'll write your f
 
 After completing this chapter, you can:
 
-- ✅ Write and launch basic CUDA kernels
-- ✅ Understand the CUDA thread hierarchy (threads, blocks, grids)
-- ✅ Calculate grid and block dimensions for arbitrary problem sizes
-- ✅ Use thread indexing to map computations to data
-- ✅ Apply basic parallelization patterns
-- ✅ Understand occupancy and resource limits
+- [OK] Write and launch basic CUDA kernels
+- [OK] Understand the CUDA thread hierarchy (threads, blocks, grids)
+- [OK] Calculate grid and block dimensions for arbitrary problem sizes
+- [OK] Use thread indexing to map computations to data
+- [OK] Apply basic parallelization patterns
+- [OK] Understand occupancy and resource limits
 
 ## Prerequisites
 
 **Previous chapters**: 
 - [Chapter 1: Performance Basics](../ch1/README.md) - profiling fundamentals
-- [Chapter 2: B200 Hardware](../ch2/README.md) - GPU architecture basics
+- [Chapter 2: NVIDIA GPU Hardware](../ch2/README.md) - GPU architecture basics
 
 **Required**: Basic C/C++ knowledge, CUDA-capable GPU
 
@@ -38,7 +38,7 @@ Grid (entire kernel launch)
 │   └── ...
 └── ...
 
-Key constraints (B200):
+Key constraints (NVIDIA GPU):
 - Max threads per block: 1024
 - Warp size: 32 (threads execute in lock-step)
 - Max blocks per SM: 32
@@ -161,14 +161,14 @@ make simple_kernel
 
 **Expected output**:
 ```
-✓ Simple kernel succeeded: 1000000 elements scaled by 2.0f
+Simple kernel succeeded: 1000000 elements scaled by 2.0f
   Configuration: 3907 blocks × 256 threads = 1000192 total threads
 ```
 
 **Performance characteristics**:
 - 1M elements @ 256 threads/block = 3,907 blocks
 - Each block processes ~256 elements
-- Executes in < 1ms on B200 (memory-bandwidth bound)
+- Executes in < 1ms on NVIDIA GPU (memory-bandwidth bound)
 
 ---
 
@@ -286,7 +286,7 @@ cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, myKernel);
 int numBlocks;
 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocks, myKernel, blockSize, 0);
 
-float occupancy = (numBlocks * blockSize / 32.0f) / 64.0f;  // 64 warps/SM on B200
+float occupancy = (numBlocks * blockSize / 32.0f) / 64.0f;  // 64 warps/SM on NVIDIA GPU
 printf("Occupancy: %.1f%%\n", occupancy * 100);
 ```
 
@@ -299,7 +299,7 @@ make occupancy_api
 **Expected output**:
 ```
 Block size: 256
-Occupancy: 100% (full SM utilization) ✅
+Occupancy: 100% (full SM utilization) [OK]
 ```
 
 **Occupancy guidelines**:
@@ -361,14 +361,14 @@ kernel<<<...>>>(data);  // Automatic migration
 ```
 
 **Benefits**:
-- ✅ Simpler code (no explicit transfers)
-- ✅ Automatic page migration
-- ✅ Oversubscription (use more memory than GPU has)
+- [OK] Simpler code (no explicit transfers)
+- [OK] Automatic page migration
+- [OK] Oversubscription (use more memory than GPU has)
 
 **Drawbacks**:
-- ❌ Slower than explicit transfers (page fault overhead)
-- ❌ Less control over placement
-- ❌ Not ideal for high-performance code
+- ERROR: Slower than explicit transfers (page fault overhead)
+- ERROR: Less control over placement
+- ERROR: Not ideal for high-performance code
 
 **When to use**: Prototyping, irregular access patterns, oversubscription scenarios.
 
@@ -391,9 +391,9 @@ kernel<<<blocks, threads>>>(data, n);
 ```
 
 **Why 256 threads?**
-- Multiple of warp size (32) ✅
-- Good occupancy on most GPUs ✅
-- Balances parallelism and resource usage ✅
+- Multiple of warp size (32) [OK]
+- Good occupancy on most GPUs [OK]
+- Balances parallelism and resource usage [OK]
 
 ### 2D Problems
 
@@ -447,6 +447,35 @@ ncu-ui ../../results/ch6/add_parallel_baseline_metrics_*.ncu-rep
 
 ---
 
+## Baseline/Optimized Example Pairs
+
+All CUDA examples follow the `baseline_*.cu` / `optimized_*.cu` pattern:
+
+### Available Pairs
+
+1. **Add Operation** (`baseline_add.cu` / `optimized_add_parallel.cu`)
+   - Sequential vs parallel vector addition
+   - Demonstrates basic parallelization patterns
+
+2. **Coalescing** (`baseline_coalescing_uncoalesced.cu` / `optimized_coalescing.cu`)
+   - Uncoalesced vs coalesced memory access
+   - Shows bandwidth improvements from proper access patterns
+
+3. **Bank Conflicts** (`baseline_bank_conflicts.cu` / `optimized_bank_conflicts.cu`)
+   - Shared memory bank conflicts and padding solution
+   - Demonstrates eliminating bank conflicts with padding
+
+4. **Instruction-Level Parallelism** (`baseline_ilp.cu` / `optimized_ilp.cu`)
+   - Sequential vs independent operations and loop unrolling
+   - Shows ILP benefits for instruction latency hiding
+
+**Run comparisons:**
+```bash
+python3 compare.py  # Compares all baseline/optimized pairs (via Python wrappers)
+```
+
+---
+
 ## How to Run All Examples
 
 ```bash
@@ -457,15 +486,21 @@ make
 
 # Run in order of complexity
 ./my_first_kernel_sm100          # Hello world
-./add_sequential_sm100           # Baseline (slow)
-./add_parallel_sm100             # Optimized (fast!)
+./baseline_add_sm100             # Baseline (slow)
+./optimized_add_parallel_sm100   # Optimized (fast!)
+./baseline_coalescing_uncoalesced_sm100  # Uncoalesced access
+./optimized_coalescing_sm100     # Coalesced access
+./baseline_bank_conflicts_sm100  # Bank conflicts
+./optimized_bank_conflicts_sm100 # No conflicts (padded)
+./baseline_ilp_sm100             # Sequential ops
+./optimized_ilp_sm100            # Independent ops + unrolling
 ./2d_kernel_sm100                # 2D indexing
 ./occupancy_api_sm100            # Check occupancy
 ./launch_bounds_example_sm100    # Resource control
 ./unified_memory_sm100           # Managed memory
 
 # Profile for learning
-../../common/profiling/profile_cuda.sh ./add_parallel baseline
+../../common/profiling/profile_cuda.sh ./optimized_add_parallel baseline
 ```
 
 ---
@@ -557,7 +592,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU, CUDA 13.0, sm_100 architecture
+**Chapter Status**: [OK] Complete
 

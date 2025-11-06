@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Allocator retry helper from Chapter 19."""
 
 from __future__ import annotations
@@ -7,7 +8,6 @@ import importlib
 import os
 import pickle
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
@@ -54,3 +54,10 @@ def generate_with_allocator_retry(
 
 if __name__ == "__main__":
     print("dynamic_memory_allocator helper module; see book for usage.")
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+

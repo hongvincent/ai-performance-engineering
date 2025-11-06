@@ -3,6 +3,8 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 
+#include "../common/headers/cuda_helpers.cuh"
+
 constexpr int N = 1 << 20;
 
 __global__ void lookupOptimized(const float* table, const int* indices, float* out, int n) {
@@ -15,9 +17,9 @@ __global__ void lookupOptimized(const float* table, const int* indices, float* o
 int main() {
   float *h_table, *h_out;
   int *h_indices;
-  cudaMallocHost(&h_table, N * sizeof(float));
-  cudaMallocHost(&h_out, N * sizeof(float));
-  cudaMallocHost(&h_indices, N * sizeof(int));
+  CUDA_CHECK(cudaMallocHost(&h_table, N * sizeof(float)));
+  CUDA_CHECK(cudaMallocHost(&h_out, N * sizeof(float)));
+  CUDA_CHECK(cudaMallocHost(&h_indices, N * sizeof(int)));
 
   for (int i = 0; i < N; ++i) {
     h_table[i] = static_cast<float>(i);
@@ -26,26 +28,27 @@ int main() {
 
   float *d_table, *d_out;
   int *d_indices;
-  cudaMalloc(&d_table, N * sizeof(float));
-  cudaMalloc(&d_indices, N * sizeof(int));
-  cudaMalloc(&d_out, N * sizeof(float));
+  CUDA_CHECK(cudaMalloc(&d_table, N * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&d_indices, N * sizeof(int)));
+  CUDA_CHECK(cudaMalloc(&d_out, N * sizeof(float)));
 
-  cudaMemcpy(d_table, h_table, N * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(d_indices, h_indices, N * sizeof(int), cudaMemcpyHostToDevice);
+  CUDA_CHECK(cudaMemcpy(d_table, h_table, N * sizeof(float), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_indices, h_indices, N * sizeof(int), cudaMemcpyHostToDevice));
 
   dim3 block(256);
   dim3 grid((N + block.x - 1) / block.x);
   lookupOptimized<<<grid, block>>>(d_table, d_indices, d_out, N);
-  cudaDeviceSynchronize();
+  CUDA_CHECK_LAST_ERROR();
+  CUDA_CHECK(cudaDeviceSynchronize());
 
-  cudaMemcpy(h_out, d_out, N * sizeof(float), cudaMemcpyDeviceToHost);
+  CUDA_CHECK(cudaMemcpy(h_out, d_out, N * sizeof(float), cudaMemcpyDeviceToHost));
   printf("out[0]=%.1f\n", h_out[0]);
 
-  cudaFree(d_table);
-  cudaFree(d_indices);
-  cudaFree(d_out);
-  cudaFreeHost(h_table);
-  cudaFreeHost(h_indices);
-  cudaFreeHost(h_out);
+  CUDA_CHECK(cudaFree(d_table));
+  CUDA_CHECK(cudaFree(d_indices));
+  CUDA_CHECK(cudaFree(d_out));
+  CUDA_CHECK(cudaFreeHost(h_table));
+  CUDA_CHECK(cudaFreeHost(h_indices));
+  CUDA_CHECK(cudaFreeHost(h_out));
   return 0;
 }

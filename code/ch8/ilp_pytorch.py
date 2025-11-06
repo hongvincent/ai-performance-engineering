@@ -3,17 +3,41 @@
 The goal is to show how grouping independent work, fusing kernels, and using
 mixed precision improves throughput on recent CUDA GPUs.
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 from __future__ import annotations
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+CHAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(CHAPTER_DIR)
+if CHAPTER_DIR not in sys.path:
+    sys.path.insert(0, CHAPTER_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(1, REPO_ROOT)
 
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
+    from arch_config import (
+        get_compile_mode,
+        maybe_compile,
+        should_use_compile,
+    )
 except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    def maybe_compile(fn, *, default_mode: str = "reduce-overhead"):
+        return fn
 
+    def should_use_compile() -> bool:
+        return False
+
+    def get_compile_mode(default: str = "reduce-overhead") -> str:
+        return default
 
 import time
 import torch
@@ -86,13 +110,28 @@ def fusion_with_torch_compile() -> None:
         y4 = torch.log(torch.abs(inp) + 1)
         return y1 + y2 + y3 + y4
 
-    # Do not force fullgraph so dynamic shapes remain supported; enable manually for stable workloads.
-    compiled = torch.compile(unfused, mode="reduce-overhead")
+    compile_mode = get_compile_mode("reduce-overhead")
+    if not should_use_compile():
+        print(
+            "torch.compile disabled (set USE_COMPILE=1) — running eager kernel only."
+        )
+        _benchmark("Eager", lambda: unfused(x))
+        return
+
+    compiled = maybe_compile(unfused, default_mode=compile_mode)
+    if compiled is unfused:
+        print(
+            f"torch.compile request failed or was disabled; "
+            f"re-run with USE_COMPILE=1 COMPILE_MODE={compile_mode} for fusion demo."
+        )
+        _benchmark("Eager (fallback)", lambda: unfused(x))
+        return
+
     compiled(x)  # warm-up
 
     print("\n=== Kernel fusion with torch.compile ===")
     unfused_ms = _benchmark("Eager", lambda: unfused(x))
-    fused_ms = _benchmark("torch.compile", lambda: compiled(x))
+    fused_ms = _benchmark(f"torch.compile ({compile_mode})", lambda: compiled(x))
     speedup = unfused_ms / fused_ms if fused_ms else float("inf")
     print(f"Fusion speedup: {speedup:5.2f}x")
 

@@ -13,7 +13,7 @@ try:
     import torch
     import torch.distributed as dist
 except ImportError:
-    print("❌ PyTorch not installed. Please install PyTorch first.")
+    print("ERROR: PyTorch not installed. Please install PyTorch first.")
     sys.exit(1)
 
 
@@ -40,7 +40,7 @@ def check_nvlink_topology():
         
         # Check for NVLink connections
         if "NV" not in output:
-            print("❌ No NVLink connections found!")
+            print("ERROR: No NVLink connections found!")
             print("   System appears to be using PCIe only.")
             return False
         
@@ -52,7 +52,7 @@ def check_nvlink_topology():
                 count = int(match)
                 nv_counts[count] = nv_counts.get(count, 0) + 1
             
-            print("✅ NVLink connections detected:")
+            print("[OK] NVLink connections detected:")
             for nv_count, occurrences in sorted(nv_counts.items()):
                 print(f"   NV{nv_count}: {occurrences} connections")
                 bandwidth_per_link = 50  # GB/s for NVLink 4.0/5.0
@@ -67,14 +67,14 @@ def check_nvlink_topology():
             
             return True
         else:
-            print("⚠️  NVLink detected but unable to parse connection count")
+            print("WARNING: NVLink detected but unable to parse connection count")
             return True
             
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error running nvidia-smi: {e}")
+        print(f"ERROR: Error running nvidia-smi: {e}")
         return False
     except FileNotFoundError:
-        print("❌ nvidia-smi not found. Is NVIDIA driver installed?")
+        print("ERROR: nvidia-smi not found. Is NVIDIA driver installed?")
         return False
 
 
@@ -106,7 +106,7 @@ def check_nvlink_status():
                 gpu_links[current_gpu] += 1
         
         if gpu_links:
-            print("✅ Active NVLink connections per GPU:")
+            print("[OK] Active NVLink connections per GPU:")
             for gpu, link_count in sorted(gpu_links.items()):
                 print(f"   GPU {gpu}: {link_count} active links @ 50 GB/s each")
             
@@ -116,17 +116,17 @@ def check_nvlink_status():
             if avg_links >= 18:
                 print("   🏆 Full mesh configuration confirmed!")
             elif avg_links >= 12:
-                print("   ✅ Good connectivity (partial mesh)")
+                print("   [OK] Good connectivity (partial mesh)")
             else:
-                print("   ⚠️  Limited NVLink connectivity")
+                print("   WARNING: Limited NVLink connectivity")
             
             return True
         else:
-            print("⚠️  Unable to parse NVLink status")
+            print("WARNING: Unable to parse NVLink status")
             return False
             
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error checking NVLink status: {e}")
+        print(f"ERROR: Error checking NVLink status: {e}")
         return False
 
 
@@ -135,7 +135,7 @@ def check_nvls_support():
     print_section("NVLS Multicast Support")
     
     if not torch.cuda.is_available():
-        print("❌ CUDA not available")
+        print("ERROR: CUDA not available")
         return False
     
     gpu_count = torch.cuda.device_count()
@@ -150,12 +150,12 @@ def check_nvls_support():
         # Hopper (9.0) and Blackwell (10.0) support NVLS
         if props.major >= 9:
             has_nvls = True
-            print(f"✅ GPU {i} ({props.name}): Compute {compute_cap} - NVLS supported")
+            print(f"[OK] GPU {i} ({props.name}): Compute {compute_cap} - NVLS supported")
         else:
-            print(f"⚠️  GPU {i} ({props.name}): Compute {compute_cap} - NVLS not supported")
+            print(f"WARNING: GPU {i} ({props.name}): Compute {compute_cap} - NVLS not supported")
     
     if has_nvls:
-        print("\n✅ NVLS multicast support available")
+        print("\n[OK] NVLS multicast support available")
         print("   Enables optimized collective operations")
     
     return has_nvls
@@ -166,13 +166,13 @@ def test_p2p_access():
     print_section("P2P Access Test")
     
     if not torch.cuda.is_available():
-        print("❌ CUDA not available")
+        print("ERROR: CUDA not available")
         return False
     
     gpu_count = torch.cuda.device_count()
     
     if gpu_count < 2:
-        print("⚠️  Less than 2 GPUs, skipping P2P test")
+        print("WARNING: Less than 2 GPUs, skipping P2P test")
         return True
     
     print(f"Testing P2P access between {gpu_count} GPUs...")
@@ -185,7 +185,7 @@ def test_p2p_access():
                 row.append('-')
             else:
                 can_access = torch.cuda.can_device_access_peer(i, j)
-                row.append('✓' if can_access else '✗')
+                row.append('' if can_access else '✗')
         p2p_matrix.append(row)
     
     # Print matrix
@@ -196,17 +196,17 @@ def test_p2p_access():
     
     # Check if all pairs can access
     all_accessible = all(
-        cell == '✓' or cell == '-' 
+        cell == '' or cell == '-' 
         for row in p2p_matrix 
         for cell in row
     )
     
     if all_accessible:
-        print("\n✅ All GPU pairs have P2P access enabled")
+        print("\n[OK] All GPU pairs have P2P access enabled")
         print("   NVLink communication fully functional")
         return True
     else:
-        print("\n❌ Some GPU pairs cannot access each other via P2P")
+        print("\nERROR: Some GPU pairs cannot access each other via P2P")
         print("   Check NCCL configuration and ACS settings")
         return False
 
@@ -231,21 +231,21 @@ def check_nccl_config():
         current = os.environ.get(env_var, "not set")
         
         if current == recommended:
-            print(f"✅ {env_var}={current}")
+            print(f"[OK] {env_var}={current}")
             print(f"   {description}")
         elif current == "not set":
-            print(f"⚠️  {env_var} not set (recommended: {recommended})")
+            print(f"WARNING: {env_var} not set (recommended: {recommended})")
             print(f"   {description}")
             all_good = False
         else:
-            print(f"❌ {env_var}={current} (recommended: {recommended})")
+            print(f"ERROR: {env_var}={current} (recommended: {recommended})")
             print(f"   {description}")
             all_good = False
     
     if all_good:
-        print("\n✅ NCCL configuration optimal for NVLink")
+        print("\n[OK] NCCL configuration optimal for NVLink")
     else:
-        print("\n⚠️  NCCL configuration could be optimized")
+        print("\nWARNING: NCCL configuration could be optimized")
         print("\nRecommended configuration:")
         print("export NCCL_P2P_LEVEL=NVL")
         print("export NCCL_P2P_DISABLE=0")
@@ -261,13 +261,13 @@ def quick_bandwidth_test():
     print_section("Quick Bandwidth Test")
     
     if not torch.cuda.is_available():
-        print("❌ CUDA not available")
+        print("ERROR: CUDA not available")
         return False
     
     gpu_count = torch.cuda.device_count()
     
     if gpu_count < 2:
-        print("⚠️  Less than 2 GPUs, skipping bandwidth test")
+        print("WARNING: Less than 2 GPUs, skipping bandwidth test")
         return True
     
     # Test first pair only for quick verification
@@ -303,21 +303,21 @@ def quick_bandwidth_test():
         elapsed_ms = start.elapsed_time(end) / iterations
         bandwidth_gbs = (size_mb / 1024) / (elapsed_ms / 1000)
         
-        print(f"\n✅ Measured bandwidth: {bandwidth_gbs:.2f} GB/s")
+        print(f"\n[OK] Measured bandwidth: {bandwidth_gbs:.2f} GB/s")
         
         if bandwidth_gbs > 200:
             print("   🏆 Excellent! NVLink is working properly")
         elif bandwidth_gbs > 100:
-            print("   ✅ Good bandwidth, NVLink appears functional")
+            print("   [OK] Good bandwidth, NVLink appears functional")
         elif bandwidth_gbs > 20:
-            print("   ⚠️  Moderate bandwidth, may be using PCIe")
+            print("   WARNING: Moderate bandwidth, may be using PCIe")
         else:
-            print("   ❌ Low bandwidth, check NVLink configuration")
+            print("   ERROR: Low bandwidth, check NVLink configuration")
         
         return bandwidth_gbs > 100
         
     except Exception as e:
-        print(f"❌ Error during bandwidth test: {e}")
+        print(f"ERROR: Error during bandwidth test: {e}")
         return False
 
 
@@ -350,7 +350,7 @@ def main():
     ]
     
     for check_name, passed in checks:
-        status = "✅ PASS" if passed else "❌ FAIL"
+        status = "[OK] PASS" if passed else "ERROR: FAIL"
         print(f"{status}  {check_name}")
     
     all_passed = all(results.values())
@@ -360,7 +360,7 @@ def main():
         print("   Your system has optimal NVLink configuration.")
         return 0
     else:
-        print("\n⚠️  Some checks failed or need attention.")
+        print("\nWARNING: Some checks failed or need attention.")
         print("   Review the output above for details.")
         return 1
 

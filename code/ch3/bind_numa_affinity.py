@@ -1,14 +1,18 @@
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """NUMA-aware affinity helpers for Chapter 3 examples (CUDA 13 / PyTorch 2.9)."""
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import ctypes
@@ -302,7 +306,7 @@ def main() -> None:
             dist.destroy_process_group()
     else:
         # Single-process mode (for testing/verification)
-        print("⚠️  Running in single-process mode (distributed environment not detected)")
+        print("WARNING: Running in single-process mode (distributed environment not detected)")
         local_rank = 0
         torch.cuda.set_device(local_rank)
         device = torch.device("cuda", local_rank)
@@ -339,7 +343,7 @@ def main() -> None:
             loss.backward()
             optimizer.step()
             if step == 0:
-                print(f"✅ NUMA binding smoke test passed (loss={loss.item():.4f})")
+                print(f"[OK] NUMA binding smoke test passed (loss={loss.item():.4f})")
             if step == 2:  # Quick test
                 break
 

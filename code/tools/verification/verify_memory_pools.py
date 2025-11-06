@@ -30,7 +30,7 @@ def main() -> int:
         supported = cuda.attribute(device, CUDADEV_ATTR_MEMORY_POOLS_SUPPORTED)
         print(f"Device {ordinal}: {name}")
         if supported:
-            print("  ✓ cudaMallocAsync / memory pools supported.")
+            print("  cudaMallocAsync / memory pools supported.")
         else:
             print("  ✗ Memory pool APIs not supported on this device.")
             failures.append(ordinal)

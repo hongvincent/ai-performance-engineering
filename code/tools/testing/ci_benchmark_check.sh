@@ -14,7 +14,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-CONFIG="${1:-docs/examples/continuous_benchmark.json}"
+CONFIG="${1:-}"
 ARTIFACT_DIR="${2:-benchmark_runs}"
 TAG="${3:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')}"
 
@@ -31,7 +31,12 @@ echo ""
 echo "Step 1: Running benchmark suite..."
 echo ""
 
-if ! python3 tools/continuous_benchmark.py \
+if [ -z "$CONFIG" ]; then
+    echo -e "${RED}Error: Config file required. Usage: $0 <config.json>${NC}"
+    exit 1
+fi
+
+if ! python3 tools/benchmarking/continuous_benchmark.py \
     "$CONFIG" \
     --artifact-dir "$ARTIFACT_DIR" \
     --tag "$TAG" \
@@ -41,7 +46,7 @@ if ! python3 tools/continuous_benchmark.py \
 fi
 
 echo ""
-echo -e "${GREEN}✓ Benchmarks complete${NC}"
+echo -e "${GREEN}Benchmarks complete${NC}"
 echo ""
 
 # Step 2: Check for regressions
@@ -56,7 +61,7 @@ if python3 tools/detect_regressions.py \
     --output-json "$ARTIFACT_DIR/regression_analysis.json" \
     --fail-on-regression; then
     echo ""
-    echo -e "${GREEN}✓ No regressions detected${NC}"
+    echo -e "${GREEN}No regressions detected${NC}"
     EXIT_CODE=0
 else
     echo ""
@@ -84,9 +89,9 @@ echo "  - Regression report: $REPORT_FILE"
 echo ""
 
 if [ $EXIT_CODE -eq 0 ]; then
-    echo -e "${GREEN}✅ All checks passed${NC}"
+    echo -e "${GREEN}[OK] All checks passed${NC}"
 else
-    echo -e "${RED}❌ Performance regressions detected${NC}"
+    echo -e "${RED}ERROR: Performance regressions detected${NC}"
     echo ""
     echo "Next steps:"
     echo "  1. Review the regression report above"

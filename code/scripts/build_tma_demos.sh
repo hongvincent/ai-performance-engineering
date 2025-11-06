@@ -45,6 +45,6 @@ echo "-> ch10/tma_2d_pipeline_blackwell"
 make ARCH="${ARCH}" tma_2d_pipeline_blackwell
 popd >/dev/null
 
-echo "✓ Builds complete. Binaries:"
+echo "Builds complete. Binaries:"
 echo "  - ${repo_root}/ch7/async_prefetch_tma"
 echo "  - ${repo_root}/ch10/tma_2d_pipeline_blackwell"

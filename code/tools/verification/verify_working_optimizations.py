@@ -27,9 +27,9 @@ from typing import Dict
 try:
     from arch_config import ArchitectureConfig, configure_optimizations
     configure_optimizations()
-    print("✓ Architecture optimizations configured\n")
+    print("Architecture optimizations configured\n")
 except ImportError:
-    print("⚠️  Warning: Could not import arch_config\n")
+    print("WARNING: Warning: Could not import arch_config\n")
 
 
 def print_section(title: str):
@@ -44,7 +44,7 @@ def check_gpu_info() -> Dict:
     print_section("GPU Information")
     
     if not torch.cuda.is_available():
-        print("❌ CUDA not available")
+        print("ERROR: CUDA not available")
         return {"available": False}
     
     device = torch.cuda.current_device()
@@ -59,14 +59,14 @@ def check_gpu_info() -> Dict:
         "total_memory": props.total_memory / (1024**3),
     }
     
-    print(f"✓ GPU: {info['name']}")
-    print(f"✓ Compute Capability: {info['compute_capability']}")
-    print(f"✓ Total Memory: {info['total_memory']:.2f} GB")
+    print(f"GPU: {info['name']}")
+    print(f"Compute Capability: {info['compute_capability']}")
+    print(f"Total Memory: {info['total_memory']:.2f} GB")
     
     is_sm121 = (props.major == 12 and props.minor == 1)
     if is_sm121:
-        print(f"✓ Grace-Blackwell GB10 detected")
-        print(f"\n⚠️  Note: TMA descriptors are non-functional with CUDA 13.0")
+        print(f"Grace-Blackwell GB10 detected")
+        print(f"\nWARNING: Note: TMA descriptors are non-functional with CUDA 13.0")
         print(f"   See: docs/nvidia_tma_bug_report.md")
         print(f"   Workaround: Use PyTorch torch.compile (tested below)")
     
@@ -97,16 +97,16 @@ def test_pytorch_compile_basic() -> bool:
         
         # Verify
         if torch.allclose(result_eager, result_compiled, rtol=1e-4):
-            print("✓ torch.compile works correctly")
+            print("torch.compile works correctly")
             print("  - Compilation succeeded")
             print("  - Results match eager mode")
             return True
         else:
-            print("❌ Results don't match")
+            print("ERROR: Results don't match")
             return False
             
     except Exception as e:
-        print(f"❌ torch.compile failed: {e}")
+        print(f"ERROR: torch.compile failed: {e}")
         return False
 
 
@@ -161,20 +161,20 @@ def test_pytorch_compile_performance() -> bool:
         
         speedup = eager_time / compiled_time
         
-        print(f"✓ Performance comparison:")
+        print(f"Performance comparison:")
         print(f"  - Eager mode:      {eager_time*1000:.2f} ms")
         print(f"  - Compiled (max):  {compiled_time*1000:.2f} ms")
         print(f"  - Speedup:         {speedup:.2f}x")
         
         if speedup > 1.1:
-            print(f"\n✓ torch.compile provides measurable speedup")
+            print(f"\ntorch.compile provides measurable speedup")
             return True
         else:
-            print(f"\n⚠️  Speedup less than expected (may vary by workload)")
+            print(f"\nWARNING: Speedup less than expected (may vary by workload)")
             return True  # Still counts as working
             
     except Exception as e:
-        print(f"❌ Performance test failed: {e}")
+        print(f"ERROR: Performance test failed: {e}")
         return False
 
 
@@ -205,18 +205,18 @@ def test_standard_operations() -> bool:
         for name, fn in tests:
             try:
                 result = fn()
-                print(f"  ✓ {name}")
+                print(f"  {name}")
             except Exception as e:
-                print(f"  ❌ {name}: {e}")
+                print(f"  ERROR: {name}: {e}")
                 all_passed = False
         
         if all_passed:
-            print(f"\n✓ All standard operations work")
+            print(f"\nAll standard operations work")
         
         return all_passed
         
     except Exception as e:
-        print(f"❌ Standard operations test failed: {e}")
+        print(f"ERROR: Standard operations test failed: {e}")
         return False
 
 
@@ -229,7 +229,7 @@ def test_fp16_support() -> bool:
         y = torch.randn(256, 256, device='cuda', dtype=torch.float16)
         z = torch.matmul(x, y)
         
-        print(f"✓ FP16 operations work")
+        print(f"FP16 operations work")
         print(f"  - Input dtype: {x.dtype}")
         print(f"  - Output dtype: {z.dtype}")
         
@@ -241,14 +241,14 @@ def test_fp16_support() -> bool:
         z_compiled = fp16_matmul(x, y)
         
         if torch.allclose(z, z_compiled, rtol=1e-2):
-            print(f"✓ FP16 with torch.compile works")
+            print(f"FP16 with torch.compile works")
             return True
         else:
-            print(f"⚠️  FP16 compiled results differ slightly")
+            print(f"WARNING: FP16 compiled results differ slightly")
             return True  # Still works, just different precision
             
     except Exception as e:
-        print(f"❌ FP16 test failed: {e}")
+        print(f"ERROR: FP16 test failed: {e}")
         return False
 
 
@@ -256,12 +256,12 @@ def print_recommendations():
     """Print recommendations for users."""
     print_section("Recommendations")
     
-    print("✓ What to use today:")
+    print("What to use today:")
     print("  1. torch.compile(model, mode='max-autotune') - RECOMMENDED")
     print("  2. Standard CUDA operations (all work fine)")
     print("  3. FP16/BF16 for best performance")
     print()
-    print("❌ What to avoid:")
+    print("ERROR: What to avoid:")
     print("  1. TMA descriptors (broken in CUDA 13.0 driver)")
     print("  2. Triton tl.make_tensor_descriptor() (relies on TMA descriptors)")
     print("  3. Manual CUDA TMA operations")
@@ -285,7 +285,7 @@ def main():
     # Check GPU
     gpu_info = check_gpu_info()
     if not gpu_info.get('available'):
-        print("\n❌ Cannot proceed without CUDA GPU")
+        print("\nERROR: Cannot proceed without CUDA GPU")
         return 1
     
     print(f"\nPyTorch: {torch.__version__}")
@@ -311,14 +311,14 @@ def main():
     print()
     
     for test_name, result in results.items():
-        status = "✓ PASS" if result else "❌ FAIL"
+        status = "PASS" if result else "ERROR: FAIL"
         print(f"  {status}: {test_name}")
     
     print()
     if passed == total:
-        print("✓ All working features verified!")
+        print("All working features verified!")
     else:
-        print("⚠️  Some tests failed")
+        print("WARNING: Some tests failed")
     
     # Print recommendations
     print_recommendations()

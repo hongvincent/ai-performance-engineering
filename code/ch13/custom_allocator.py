@@ -1,18 +1,19 @@
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure architecture optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 from arch_config import ArchitectureConfig
-import torch.profiler as profiler
-from torch.profiler import profile, record_function, ProfilerActivity, schedule
-import torch.cuda.nvtx as nvtx
+from common.device_utils import cuda_supported, get_preferred_device
 import torch
-import os
 
 _ARCH_CFG = ArchitectureConfig()
 
@@ -39,8 +40,11 @@ def demonstrate_custom_allocator():
     """Demonstrate custom CUDA memory allocator setup."""
     print("=== Custom CUDA Allocator Demo ===")
     
-    if not torch.cuda.is_available():
-        print("CUDA not available, skipping allocator demo")
+    if not cuda_supported():
+        _, err = get_preferred_device()
+        print("CUDA not available or unsupported, skipping allocator demo")
+        if err:
+            print(f"Reason: {err}")
         return
     
     # Show current allocator info
@@ -49,56 +53,81 @@ def demonstrate_custom_allocator():
     # Memory allocation patterns
     def test_allocation_pattern(name, allocator_config=None):
         print(f"\nTesting {name}:")
-        
-        if allocator_config:
-            # Set custom allocator configuration
-            os.environ.update(allocator_config)
-            os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
-        
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        
-        # Allocate various tensor sizes
-        tensors = []
-        sizes = [1024, 2048, 4096, 8192, 16384]
-        
-        for size in sizes:
-            tensor = torch.randn(size, size, device='cuda')
-            tensors.append(tensor)
-        
-        allocated = torch.cuda.memory_allocated() / 1e6
-        reserved = torch.cuda.memory_reserved() / 1e6
-        
-        print(f"  Allocated: {allocated:.1f} MB")
-        print(f"  Reserved: {reserved:.1f} MB")
-        print(f"  Efficiency: {allocated/reserved*100:.1f}%")
-        
-        # Free tensors
-        del tensors
-        torch.cuda.empty_cache()
-        
-        return allocated, reserved
+
+        prev_cuda_conf = os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
+        prev_legacy_conf = os.environ.get("PYTORCH_ALLOC_CONF")
+
+        try:
+            if allocator_config and "PYTORCH_CUDA_ALLOC_CONF" in allocator_config:
+                # Prefer CUDA-scoped allocator variable on PyTorch 2.9+
+                os.environ.pop("PYTORCH_ALLOC_CONF", None)
+                os.environ["PYTORCH_CUDA_ALLOC_CONF"] = allocator_config["PYTORCH_CUDA_ALLOC_CONF"]
+            else:
+                os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+
+            # Allocate various tensor sizes
+            tensors = []
+            sizes = [1024, 2048, 4096, 8192, 16384]
+
+            for size in sizes:
+                tensor = torch.randn(size, size, device='cuda')
+                tensors.append(tensor)
+
+            allocated = torch.cuda.memory_allocated() / 1e6
+            reserved = torch.cuda.memory_reserved() / 1e6
+
+            print(f"  Allocated: {allocated:.1f} MB")
+            print(f"  Reserved: {reserved:.1f} MB")
+            if reserved:
+                print(f"  Efficiency: {allocated / reserved * 100:.1f}%")
+
+            # Free tensors
+            del tensors
+            torch.cuda.empty_cache()
+
+            return allocated, reserved
+        finally:
+            # Restore prior allocator configuration
+            if prev_cuda_conf is not None:
+                os.environ["PYTORCH_CUDA_ALLOC_CONF"] = prev_cuda_conf
+            else:
+                os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+            if prev_legacy_conf is not None:
+                os.environ["PYTORCH_ALLOC_CONF"] = prev_legacy_conf
+            else:
+                os.environ.pop("PYTORCH_ALLOC_CONF", None)
     
     # Test default allocator
     default_alloc, default_reserved = test_allocation_pattern("Default Allocator")
     
     # Test with custom configuration
     custom_config = {
-        "PYTORCH_ALLOC_CONF": "max_split_size_mb:128,garbage_collection_threshold:0.6"
+        "PYTORCH_CUDA_ALLOC_CONF": "backend:cudaMallocAsync,max_split_size_mb:256,garbage_collection_threshold:0.6"
     }
     custom_alloc, custom_reserved = test_allocation_pattern(
         "Custom Configuration", custom_config
     )
     
     # Show improvement
-    print(f"\nMemory efficiency improvement: {(custom_alloc/custom_reserved) / (default_alloc/default_reserved) - 1:.1%}")
+    if default_reserved and custom_reserved and default_alloc:
+        baseline_eff = default_alloc / default_reserved
+        custom_eff = custom_alloc / custom_reserved
+        print(f"\nMemory efficiency improvement: {custom_eff / baseline_eff - 1:.1%}")
+    else:
+        print("\nUnable to compute efficiency improvement due to zero reserved memory.")
 
 def demonstrate_memory_pool():
     """Demonstrate memory pool management."""
     print("\n=== Memory Pool Demo ===")
     
-    if not torch.cuda.is_available():
-        print("CUDA not available, skipping memory pool demo")
+    if not cuda_supported():
+        _, err = get_preferred_device()
+        print("CUDA not available or unsupported, skipping memory pool demo")
+        if err:
+            print(f"Reason: {err}")
         return
     
     # Get current memory pool
@@ -143,12 +172,15 @@ def demonstrate_memory_snapshot():
     """Demonstrate memory snapshot for debugging."""
     print("\n=== Memory Snapshot Demo ===")
     
-    if not torch.cuda.is_available():
-        print("CUDA not available, skipping snapshot demo")
+    if not cuda_supported():
+        _, err = get_preferred_device()
+        print("CUDA not available or unsupported, skipping snapshot demo")
+        if err:
+            print(f"Reason: {err}")
         return
     
     # Enable memory history tracking
-    torch.cuda.memory._record_memory_history(True)
+    torch.cuda.memory._record_memory_history(max_entries=200000)
     
     # Simulate some allocations
     tensors = []
@@ -160,8 +192,9 @@ def demonstrate_memory_snapshot():
         print(f"Allocated tensor {i+1}: {size}x{size}")
     
     # Take snapshot
-    snapshot = torch.cuda.memory._snapshot()
-    print(f"\nSnapshot contains {len(snapshot)} memory events")
+    torch.cuda.memory._dump_snapshot("memory_snapshot.json")
+    snapshot = torch.cuda.memory.memory_snapshot()
+    print(f"\nSnapshot contains {len(snapshot)} memory records")
     
     # Analyze snapshot (simplified)
     total_allocated = 0
@@ -191,7 +224,7 @@ def demonstrate_memory_snapshot():
     # print("Load this file in PyTorch memory visualizer: https://pytorch.org/memory_viz")
     
     # Stop recording
-    torch.cuda.memory._record_memory_history(False)
+    torch.cuda.memory._record_memory_history(enabled=None)
     
     # Clean up
     del tensors
@@ -212,7 +245,7 @@ def demonstrate_distributed_memory():
             rank = 0
             world_size = 1
         
-        if torch.cuda.is_available():
+        if cuda_supported():
             # Set device based on rank
             device = rank % torch.cuda.device_count()
             torch.cuda.set_device(device)
@@ -239,7 +272,7 @@ if __name__ == "__main__":
     demonstrate_distributed_memory()
 
 # Architecture-specific optimizations
-if torch.cuda.is_available():
+if cuda_supported():
     device_props = torch.cuda.get_device_properties(0)
 
     inductor = getattr(torch, "_inductor", None)

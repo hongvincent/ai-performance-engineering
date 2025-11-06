@@ -8,6 +8,15 @@ Blackwell B200 Optimizations Applied:
 - Deeper pipelines (num_stages=4-5) for better overlap
 - Direct broadcast for offset tensors to reduce register pressure
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 import torch
 import triton
@@ -172,58 +181,33 @@ def tiled_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
                 'BLOCK_M': 128,
                 'BLOCK_N': 128,
                 'BLOCK_K': 64,
+                'NUM_STAGES': 2,
             },
             num_warps=8,
-            num_stages=4,
+            num_stages=2,
         ),
         triton.Config(
             {
                 'BLOCK_M': 64,
                 'BLOCK_N': 128,
                 'BLOCK_K': 64,
+                'NUM_STAGES': 3,
             },
-            num_warps=4,
+            num_warps=8,
             num_stages=3,
         ),
         triton.Config(
             {
                 'BLOCK_M': 128,
                 'BLOCK_N': 64,
-                'BLOCK_K': 32,
+                'BLOCK_K': 64,
+                'NUM_STAGES': 3,
             },
-            num_warps=4,
+            num_warps=8,
             num_stages=3,
         ),
-        # Blackwell-optimized configs with larger blocks and deeper pipelines
-        triton.Config(
-            {
-                'BLOCK_M': 256,
-                'BLOCK_N': 256,
-                'BLOCK_K': 128,
-            },
-            num_warps=16,
-            num_stages=5,
-        ),
-        triton.Config(
-            {
-                'BLOCK_M': 128,
-                'BLOCK_N': 256,
-                'BLOCK_K': 128,
-            },
-            num_warps=16,
-            num_stages=4,
-        ),
-        triton.Config(
-            {
-                'BLOCK_M': 256,
-                'BLOCK_N': 128,
-                'BLOCK_K': 128,
-            },
-            num_warps=16,
-            num_stages=4,
-        ),
     ],
-    key=['M', 'N', 'K']
+    key=['M', 'N', 'K'],
 )
 @triton.jit
 def matmul_kernel_persistent(
@@ -233,16 +217,18 @@ def matmul_kernel_persistent(
     stride_bk, stride_bn,
     stride_cm, stride_cn,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
 ):
-    """Persistent thread GEMM with tensor descriptors and autotuning."""
-    pid = tl.program_id(axis=0)
-    np = tl.num_programs(axis=0)
+    """Persistent thread GEMM with Triton 3.5+ tensor descriptors + autotuning."""
+    pid = tl.program_id(0)
+    nprog = tl.num_programs(0)
 
     MT = tl.cdiv(M, BLOCK_M)
     NT = tl.cdiv(N, BLOCK_N)
     TILE_COUNT = MT * NT
-    
 
+    # Descriptor mapping rules (TMA): leading strides must be multiples of 16 bytes,
+    # and the last dimension must be contiguous.
     A_desc = tl.make_tensor_descriptor(
         A_ptr,
         shape=[M, K],
@@ -256,56 +242,91 @@ def matmul_kernel_persistent(
         block_shape=[BLOCK_K, BLOCK_N],
     )
 
-    for tile_idx in range(pid, TILE_COUNT, np):
+    tile_idx = pid
+    while tile_idx < TILE_COUNT:
         pid_m = tile_idx // NT
         pid_n = tile_idx % NT
 
         m0 = pid_m * BLOCK_M
         n0 = pid_n * BLOCK_N
-        
+
         offs_m = m0 + tl.arange(0, BLOCK_M)
         offs_n = n0 + tl.arange(0, BLOCK_N)
         offs_k = tl.arange(0, BLOCK_K)
 
         acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-        for k0 in range(0, K, BLOCK_K):
-            # Blackwell optimization: Load A tile as fp16 for 50% bandwidth reduction
-            if (m0 + BLOCK_M <= M) and (k0 + BLOCK_K <= K):
-                a = A_desc.load([m0, k0]).to(tl.float16)
-            else:
-                # Use broadcast_to for explicit 2D shape
-                row_offsets = tl.broadcast_to(offs_m[:, None], (BLOCK_M, BLOCK_K))
-                col_offsets = tl.broadcast_to((k0 + offs_k)[None, :], (BLOCK_M, BLOCK_K))
-                # Note: descriptor loads don't support eviction_policy
-                a = tl.load(
-                    A_desc,
-                    offsets=(row_offsets, col_offsets),
-                    boundary_check=(0, 1),
-                    padding_option="zero",
-                ).to(tl.float16)
-            
-            # Blackwell optimization: Load B tile as fp16 for 50% bandwidth reduction
-            if (n0 + BLOCK_N <= N) and (k0 + BLOCK_K <= K):
-                b = B_desc.load([k0, n0]).to(tl.float16)
-            else:
-                # Use broadcast_to for explicit 2D shape
-                row_offsets = tl.broadcast_to((k0 + offs_k)[:, None], (BLOCK_K, BLOCK_N))
-                col_offsets = tl.broadcast_to(offs_n[None, :], (BLOCK_K, BLOCK_N))
-                # Note: descriptor loads don't support eviction_policy
-                b = tl.load(
-                    B_desc,
-                    offsets=(row_offsets, col_offsets),
-                    boundary_check=(0, 1),
-                    padding_option="zero",
-                ).to(tl.float16)
-            
-            # Compute: fp16 inputs cut bandwidth, fp32 accumulator maintains accuracy
-            acc += tl.dot(a, b, out_dtype=tl.float32)
-        
+        K_tiles = (K + BLOCK_K - 1) // BLOCK_K
+        if K_tiles == 0:
+            c_ptrs = C_ptr + (offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn)
+            c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+            tl.store(c_ptrs, acc, mask=c_mask)
+            tile_idx += nprog
+            continue
+
+        k0 = 0
+        if (m0 + BLOCK_M <= M) and (k0 + BLOCK_K <= K):
+            a_cur = A_desc.load([m0, k0])
+        else:
+            row_offsets = tl.broadcast_to(offs_m[:, None], (BLOCK_M, BLOCK_K))
+            col_offsets = tl.broadcast_to((k0 + offs_k)[None, :], (BLOCK_M, BLOCK_K))
+            a_cur = tl.load(
+                A_desc,
+                offsets=(row_offsets, col_offsets),
+                boundary_check=(0, 1),
+                padding_option="zero",
+            )
+
+        if (n0 + BLOCK_N <= N) and (k0 + BLOCK_K <= K):
+            b_cur = B_desc.load([k0, n0])
+        else:
+            row_offsets = tl.broadcast_to((k0 + offs_k)[:, None], (BLOCK_K, BLOCK_N))
+            col_offsets = tl.broadcast_to(offs_n[None, :], (BLOCK_K, BLOCK_N))
+            b_cur = tl.load(
+                B_desc,
+                offsets=(row_offsets, col_offsets),
+                boundary_check=(0, 1),
+                padding_option="zero",
+            )
+
+        for kt in tl.range(0, K_tiles, num_stages=NUM_STAGES, warp_specialize=True):
+            next_k = (kt + 1) * BLOCK_K
+
+            if kt + 1 < K_tiles:
+                if (m0 + BLOCK_M <= M) and (next_k + BLOCK_K <= K):
+                    a_next = A_desc.load([m0, next_k])
+                else:
+                    row_offsets = tl.broadcast_to(offs_m[:, None], (BLOCK_M, BLOCK_K))
+                    col_offsets = tl.broadcast_to((next_k + offs_k)[None, :], (BLOCK_M, BLOCK_K))
+                    a_next = tl.load(
+                        A_desc,
+                        offsets=(row_offsets, col_offsets),
+                        boundary_check=(0, 1),
+                        padding_option="zero",
+                    )
+
+                if (n0 + BLOCK_N <= N) and (next_k + BLOCK_K <= K):
+                    b_next = B_desc.load([next_k, n0])
+                else:
+                    row_offsets = tl.broadcast_to((next_k + offs_k)[:, None], (BLOCK_K, BLOCK_N))
+                    col_offsets = tl.broadcast_to(offs_n[None, :], (BLOCK_K, BLOCK_N))
+                    b_next = tl.load(
+                        B_desc,
+                        offsets=(row_offsets, col_offsets),
+                        boundary_check=(0, 1),
+                        padding_option="zero",
+                    )
+
+            acc += tl.dot(a_cur, b_cur, out_dtype=tl.float32)
+
+            if kt + 1 < K_tiles:
+                a_cur = a_next
+                b_cur = b_next
 
         c_ptrs = C_ptr + (offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn)
         c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
         tl.store(c_ptrs, acc, mask=c_mask)
+
+        tile_idx += nprog
 
 
 def persistent_matmul_descriptor(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
@@ -584,6 +605,15 @@ def benchmark_persistent_vs_standard():
 
 
 if __name__ == "__main__":
+    if not torch.cuda.is_available():
+        print("CUDA not available; skipping Triton examples benchmark.")
+        sys.exit(0)
+
+    cc = torch.cuda.get_device_capability()
+    if cc != (10, 0):
+        print(f"Skipping Triton examples: requires Blackwell SM 10.0, detected SM {cc[0]}.{cc[1]}.")
+        sys.exit(0)
+
     print("Running Triton examples...")
     
     benchmark_fp8_vs_fp16()

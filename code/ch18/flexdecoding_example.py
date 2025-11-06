@@ -1,14 +1,29 @@
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
+# Environment (Oct-2025): CUDA 13.x r580+, torch 2.9.0+cu130, triton 3.5.0, optional TE 2.8+
 """FlexDecoding showcase aligned with PyTorch 2.9 (CUDA 13.0)."""
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+except Exception:
+    class arch_config:  # type: ignore[override]
+        @staticmethod
+        def is_blackwell() -> bool:
+            import torch
+            if not torch.cuda.is_available():
+                return False
+            major, minor = torch.cuda.get_device_capability()
+            return major >= 12
 
 
 import math
@@ -26,6 +41,13 @@ try:
 except (ImportError, AttributeError):
     HAS_FLEX = False
 
+QUICK_MODE = any(
+    os.getenv(flag, "0") == "1"
+    for flag in ("QUICK_PROFILE", "BENCHMARK_QUICK", "RUN_ALL_CHAPTERS")
+)
+DEFAULT_COMPILE_MODE = "reduce-overhead" if QUICK_MODE else "default"
+COMPILE_MODE = os.getenv("TORCH_COMPILE_MODE", DEFAULT_COMPILE_MODE)
+
 
 def _device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -39,8 +61,11 @@ def _sync() -> None:
 def _benchmark(label: str, fn, iters: int) -> float:
     _sync()
     start = time.perf_counter()
-    for _ in range(iters):
-        fn()
+    if QUICK_MODE:
+        iters = min(iters, 5)
+    with torch.inference_mode():
+        for _ in range(iters):
+            fn()
     _sync()
     elapsed = (time.perf_counter() - start) * 1_000 / iters
     print(f"{label:<28}: {elapsed:7.3f} ms")
@@ -82,6 +107,12 @@ class FlexDecodingModule(torch.nn.Module):
         self.prefill_impl = None
         self.decode_impl = None
         self.flex_enabled = HAS_FLEX
+        assert torch.cuda.is_available(), "CUDA required for FlexDecoding demo"
+        major, minor = torch.cuda.get_device_capability()
+        assert major >= 12, f"Blackwell expected (sm_120); got sm_{major}{minor}"
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cudnn.conv.fp32_precision = "tf32"
+        self.compile_mode = COMPILE_MODE
 
     def _compile(self, pattern: str = "causal") -> None:
         device = next(self.parameters()).device
@@ -91,7 +122,7 @@ class FlexDecodingModule(torch.nn.Module):
         q_prefill = torch.randn(1, heads, 256, head_dim, device=device)
         kv_prefill = torch.randn_like(q_prefill)
         q_decode = torch.randn(1, heads, 1, head_dim, device=device)
-        compile_kwargs = {"mode": "max-autotune"}  # Keep fullgraph disabled unless shapes are static.
+        compile_kwargs = {"mode": self.compile_mode, "dynamic": None}
 
         def configure_sdpa_fallback() -> None:
             def sdpa(q, k, v):
@@ -171,7 +202,6 @@ class FlexDecodingModule(torch.nn.Module):
 
     def prefill(self, tokens: torch.Tensor, past: int = 0) -> torch.Tensor:
         batch, seqlen, _ = tokens.shape
-        device = tokens.device
         self.ensure_compiled()
         if self.k_cache.shape[0] != batch:
             self.clear_cache(batch)
@@ -191,7 +221,6 @@ class FlexDecodingModule(torch.nn.Module):
 
     def decode(self, token: torch.Tensor, position: int) -> torch.Tensor:
         batch, _, _ = token.shape
-        device = token.device
         self.ensure_compiled()
 
         q = self.q_proj(token).view(batch, 1, self.cfg.heads, self.head_dim)
@@ -214,16 +243,17 @@ class FlexDecodingModule(torch.nn.Module):
 
 def jagged_batch(model: FlexDecodingModule, sequences: Iterable[torch.Tensor]) -> List[torch.Tensor]:
     outputs: List[torch.Tensor] = []
-    for seq in sequences:
-        model.clear_cache(seq.shape[0])
-        pref = model.prefill(seq)
-        cur = pref[:, -1:, :]
-        tokens = [cur]
-        for step in range(3):
-            nxt = model.decode(cur, seq.shape[1] + step)
-            tokens.append(nxt)
-            cur = nxt
-        outputs.append(torch.cat(tokens, dim=1))
+    with torch.inference_mode():
+        for seq in sequences:
+            model.clear_cache(seq.shape[0])
+            pref = model.prefill(seq)
+            cur = pref[:, -1:, :]
+            tokens = [cur]
+            for step in range(3):
+                nxt = model.decode(cur, seq.shape[1] + step)
+                tokens.append(nxt)
+                cur = nxt
+            outputs.append(torch.cat(tokens, dim=1))
     return outputs
 
 
@@ -268,16 +298,17 @@ def main() -> None:
     model = FlexDecodingModule(cfg).to(device)
     model.ensure_compiled()
 
-    prompt = torch.randn(1, 32, cfg.dim, device=device)
-    print("\nPrefill output shape", model.prefill(prompt).shape)
-    token = torch.randn(1, 1, cfg.dim, device=device)
-    print("Decode output shape", model.decode(token, 32).shape)
+    with torch.inference_mode():
+        prompt = torch.randn(1, 32, cfg.dim, device=device)
+        print("\nPrefill output shape", model.prefill(prompt).shape)
+        token = torch.randn(1, 1, cfg.dim, device=device)
+        print("Decode output shape", model.decode(token, 32).shape)
 
-    sequences = [
-        torch.randn(1, 16, cfg.dim, device=device),
-        torch.randn(1, 32, cfg.dim, device=device),
-        torch.randn(1, 64, cfg.dim, device=device),
-    ]
+        sequences = [
+            torch.randn(1, 16, cfg.dim, device=device),
+            torch.randn(1, 32, cfg.dim, device=device),
+            torch.randn(1, 64, cfg.dim, device=device),
+        ]
     outs = jagged_batch(model, sequences)
     for idx, out in enumerate(outs):
         print(f"Sequence {idx}: {out.shape[1]} tokens emitted")

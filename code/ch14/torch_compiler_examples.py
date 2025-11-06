@@ -4,21 +4,31 @@ Optimized torch.compile for Blackwell B200
 Demonstrates torch.compile configuration for optimal performance on Blackwell.
 Includes proper warmup, TF32 settings, and Inductor configuration.
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 
-# Add parent directory to path to import arch_config
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add repository root for shared modules
+_chapter_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.dirname(_chapter_dir)
+sys.path.insert(0, _repo_root)
 
-import arch_config  # noqa: F401 - Configure Blackwell optimizations
 
 import torch
 import torch.nn as nn
 import triton.testing
 import time
 
-from torch_compile_large_model import create_model
+from extras.ch14.torch_compile_large_model import create_model
 
+os.environ.setdefault("TORCH_COMPILE_DEMO_QUICK", "1")  # TODO(cfregly): revisit default once long-form demo is separated
 QUICK_MODE = os.environ.get("TORCH_COMPILE_DEMO_QUICK", "0") == "1"
 
 
@@ -34,6 +44,7 @@ def configure_for_blackwell_peak_performance():
     # Flash Attention already configured by arch_config, but safe to call again
     torch.backends.cuda.enable_flash_sdp(True)
     torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
     print("Flash Attention enabled")
     
     torch._inductor.config.triton.cudagraphs = True
@@ -42,6 +53,12 @@ def configure_for_blackwell_peak_performance():
     torch._inductor.config.coordinate_descent_tuning = True
     torch._inductor.config.epilogue_fusion = True
     print("Inductor configuration applied")
+    
+    try:
+        torch.compiler.set_stance("eager_on_recompile")
+        print("torch.compiler.set_stance → eager_on_recompile")
+    except AttributeError:
+        print("torch.compiler.set_stance not available; skipping.")
     
     os.environ['TRITON_CUDNN_ALGOS'] = '1'
     os.environ['TRITON_ALWAYS_COMPILE'] = '1'
@@ -173,19 +190,19 @@ def main():
         model, x, "Eager Mode"
     )
     
-    # 6. CRITICAL: Explicit warmup for torch.compile (100+ iterations)
+    # 6. Explicit warmup for torch.compile
     print("\n" + "=" * 80)
-    print("COMPILED MODE - WARMUP PHASE (100+ iterations required!)")
+    print("COMPILED MODE - WARMUP PHASE")
     print("=" * 80)
-    warmup_iters = 100
+    warmup_iters = 10
     if QUICK_MODE:
-        warmup_iters = 30  # Increased from 10 to ensure stable compilation
-    print(f"Running {warmup_iters} warmup iterations for torch.compile...")
+        warmup_iters = 3  # Quick mode keeps warmup tiny for automation runs
+    print(f"Running {warmup_iters} warmup iteration(s) for torch.compile...")
     with torch.no_grad():
         for i in range(warmup_iters):
             _ = model_compiled(x)
-            if not QUICK_MODE and (i + 1) % 20 == 0:
-                print(f"  Warmup iteration {i + 1}/100...")
+            if not QUICK_MODE and (i + 1) % 5 == 0:
+                print(f"  Warmup iteration {i + 1}/{warmup_iters}...")
     torch.cuda.synchronize()
     print(" Warmup complete! Now benchmarking...")
     
@@ -222,13 +239,13 @@ def main():
     else:
         print(" ISSUE: Speedup below target. Check:")
         print("   1. Is TF32 enabled?")
-        print("   2. Did you run enough warmup iterations?")
+        print("   2. Did you run enough warmup iterations (>=10, or 3 in quick mode)?")
         print("   3. Is the model large enough to benefit from compilation?")
     
     print("\n" + "=" * 80)
     print("KEY LEARNINGS FOR BOOK")
     print("=" * 80)
-    print("1. Warmup is CRITICAL - Need 100+ iterations for compiled models")
+    print("1. Warmup is still required—10 iterations baseline (3 in quick mode)")
     print("2. TF32 must be enabled (e.g., torch.set_float32_matmul_precision('high'))")
     print("3. fullgraph=True gives best performance (if possible)")
     print("4. CUDA graph trees provide additional 15-20% speedup")
@@ -245,7 +262,6 @@ if __name__ == "__main__":
     # Exit with appropriate code
     # Accept any speedup (1.0x+) as success - torch.compile doesn't always
     # show dramatic gains, especially when the baseline is already well-optimized
-    import sys
     # In quick mode, allow more performance variability due to fewer warmup iterations
     SUCCESS_THRESHOLD = 0.90 if QUICK_MODE else 0.98
     sys.exit(0 if speedup >= SUCCESS_THRESHOLD else 1)

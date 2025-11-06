@@ -8,20 +8,20 @@ Scaling from one GPU to eight (or more) requires understanding parallel training
 
 After completing this chapter, you can:
 
-- ✅ Implement data-parallel training with PyTorch DistributedDataParallel (DDP)
-- ✅ Optimize NCCL collectives for maximum bandwidth utilization
-- ✅ Apply tensor parallelism and pipeline parallelism for large models
-- ✅ Use NVSHMEM for low-latency GPU-to-GPU communication
-- ✅ Measure and optimize multi-GPU scaling efficiency
-- ✅ Troubleshoot common multi-GPU issues
+- [OK] Implement data-parallel training with PyTorch DistributedDataParallel (DDP)
+- [OK] Optimize NCCL collectives for maximum bandwidth utilization
+- [OK] Apply tensor parallelism and pipeline parallelism for large models
+- [OK] Use NVSHMEM for low-latency GPU-to-GPU communication
+- [OK] Measure and optimize multi-GPU scaling efficiency
+- [OK] Troubleshoot common multi-GPU issues
 
 ## Prerequisites
 
 **Previous chapters**:
-- [Chapter 2: B200 Hardware](../ch2/README.md) - NVLink architecture
+- [Chapter 2: NVIDIA GPU Hardware](../ch2/README.md) - NVLink architecture
 - [Chapter 3: System Tuning](../ch3/README.md) - NUMA binding
 
-**Required**: 2+ GPUs (examples designed for 8x B200)
+**Required**: 2+ GPUs (examples designed for 8x NVIDIA GPU)
 
 ## Examples
 
@@ -49,7 +49,7 @@ torchrun --nproc_per_node=8 training_8xb200_pipeline.py --benchmark
 **Expected scaling**:
 - **Single GPU**: 100 samples/sec
 - **8 GPUs (ideal)**: 800 samples/sec (8x)
-- **8 GPUs (realistic)**: 700 samples/sec (7x) - 87.5% efficiency ✅
+- **8 GPUs (realistic)**: 700 samples/sec (7x) - 87.5% efficiency [OK]
 
 **Why not 8x?** Communication overhead, load imbalance, and synchronization reduce ideal scaling.
 
@@ -71,9 +71,9 @@ torchrun --nproc_per_node=8 training_8xb200_pipeline.py --benchmark
 torchrun --nproc_per_node=8 nccl_benchmark.py --size 1GB
 ```
 
-**Expected performance (B200 NVLink 5.0)**:
+**Expected performance (NVIDIA GPU NVLink 5.0)**:
 ```
-AllReduce (1 GB):     273.5 GB/s  ✅ Excellent
+AllReduce (1 GB):     273.5 GB/s  [OK] Excellent
 AllGather (1 GB):     285 GB/s
 ReduceScatter (1 GB): 270 GB/s
 Broadcast (1 GB):     310 GB/s
@@ -137,7 +137,7 @@ Communication Pattern:
     AllGather           → NVSHMEM (< 1MB), NCCL (> 1MB)
 ```
 
-#### Performance Characteristics (8x B200, NVLink 5.0)
+#### Performance Characteristics (8x NVIDIA GPU, NVLink 5.0)
 
 | Operation | Message Size | NVSHMEM | NCCL | Speedup |
 |-----------|--------------|---------|------|---------|
@@ -162,12 +162,12 @@ Communication Pattern:
 - **Zero-copy access**: Direct remote memory reads
 
 **When to use**:
-- ✅ Halo exchanges in sparse workloads
-- ✅ Dynamic load balancing
-- ✅ Fine-grained synchronization
-- ✅ Pipeline microbatch handoff (<5 μs latency)
-- ✅ KV cache sharing in inference
-- ❌ Large gradient AllReduce (NCCL is better)
+- [OK] Halo exchanges in sparse workloads
+- [OK] Dynamic load balancing
+- [OK] Fine-grained synchronization
+- [OK] Pipeline microbatch handoff (<5 μs latency)
+- [OK] KV cache sharing in inference
+- ERROR: Large gradient AllReduce (NCCL is better)
 
 **How to run**:
 ```bash
@@ -179,14 +179,14 @@ nvshmemrun -np 8 ./nvshmem_8gpu_examples
 mpirun -np 8 ./nvshmem_8gpu_examples
 
 # Conceptual mode (without NVSHMEM)
-nvcc -O3 -std=c++17 -arch=sm_100 nvshmem_8gpu_examples.cu -o nvshmem_8gpu_examples_demo
+nvcc -O3 -std=c++17 -arch=modern compute capability nvshmem_8gpu_examples.cu -o nvshmem_8gpu_examples_demo
 ./nvshmem_8gpu_examples_demo
 ```
 
 **Expected latency**:
 - **NVSHMEM put (1 KB)**: ~0.8 μs
 - **NCCL send (1 KB)**: ~12 μs
-- **Speedup**: **15x** for small messages ✅
+- **Speedup**: **15x** for small messages [OK]
 
 ---
 
@@ -279,7 +279,7 @@ torchrun --nproc_per_node=8 symmetric_memory_8gpu.py
 
 **Additional NVSHMEM Resources**:
 - All CUDA examples support both NVSHMEM and conceptual modes
-- Compilation: `nvcc -O3 -std=c++17 -arch=sm_100 -DUSE_NVSHMEM -I$NVSHMEM_HOME/include -L$NVSHMEM_HOME/lib -lnvshmem file.cu`
+- Compilation: `nvcc -O3 -std=c++17 -arch=modern compute capability -DUSE_NVSHMEM -I$NVSHMEM_HOME/include -L$NVSHMEM_HOME/lib -lnvshmem file.cu`
 - Run: `nvshmemrun -np 8 ./executable` or `mpirun -np 8 ./executable`
 - All Python examples use PyTorch 2.9+ `torch.distributed.nn.SymmetricMemory`
 
@@ -292,14 +292,14 @@ torchrun --nproc_per_node=8 symmetric_memory_8gpu.py
 **Purpose**: Compare naive DataParallel vs optimized DistributedDataParallel.
 
 **DataParallel problems**:
-- ❌ Single-process multi-threaded (GIL contention)
-- ❌ Unbalanced GPU 0 load (collects all results)
-- ❌ Synchronous gradient collection
+- ERROR: Single-process multi-threaded (GIL contention)
+- ERROR: Unbalanced GPU 0 load (collects all results)
+- ERROR: Synchronous gradient collection
 
 **DistributedDataParallel benefits**:
-- ✅ Multi-process (no GIL)
-- ✅ Balanced load across all GPUs
-- ✅ Overlapped gradient communication
+- [OK] Multi-process (no GIL)
+- [OK] Balanced load across all GPUs
+- [OK] Overlapped gradient communication
 
 **How to run**:
 ```bash
@@ -370,15 +370,15 @@ Efficiency = Actual_Speedup / Ideal_Speedup
           = (Throughput_N_GPUs / Throughput_1_GPU) / N
 ```
 
-### Measured Scaling (8x B200)
+### Measured Scaling (8x NVIDIA GPU)
 
 | Configuration | Throughput | Scaling | Efficiency |
 |---------------|------------|---------|------------|
 | 1 GPU | 120 samples/sec | 1x | 100% |
-| 2 GPUs (DP) | 230 samples/sec | 1.92x | 96% ✅ |
-| 4 GPUs (DP) | 440 samples/sec | 3.67x | 92% ✅ |
-| 8 GPUs (DP) | 840 samples/sec | 7.0x | 87.5% ✅ |
-| 8 GPUs (TP=2, PP=2, DP=2) | 780 samples/sec | 6.5x | 81% ✅ |
+| 2 GPUs (DP) | 230 samples/sec | 1.92x | 96% [OK] |
+| 4 GPUs (DP) | 440 samples/sec | 3.67x | 92% [OK] |
+| 8 GPUs (DP) | 840 samples/sec | 7.0x | 87.5% [OK] |
+| 8 GPUs (TP=2, PP=2, DP=2) | 780 samples/sec | 6.5x | 81% [OK] |
 
 **87.5% efficiency on 8 GPUs is excellent!** Realistic target for well-tuned training.
 
@@ -474,7 +474,7 @@ nvidia-smi topo -m
 ```
 
 **Solution**: PyTorch/NCCL enable P2P automatically. If disabled, check:
-- Driver version (580+ required for B200)
+- Driver version (580+ required for NVIDIA GPU)
 - IOMMU settings
 - PCIe ACS (Access Control Services)
 
@@ -532,6 +532,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9, NCCL 2.21, CUDA 13.0
+**Chapter Status**: [OK] Complete
+

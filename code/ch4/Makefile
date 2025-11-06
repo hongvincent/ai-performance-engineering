@@ -3,12 +3,12 @@
 
 include ../common/cuda_arch.mk
 
-NVSHMEM_HOME ?= /usr/local/nvshmem
-NVSHMEM_INCLUDE = -I$(NVSHMEM_HOME)/include
-NVSHMEM_LIB = -L$(NVSHMEM_HOME)/lib -lnvshmem
-HAS_NVSHMEM := $(shell test -d $(NVSHMEM_HOME) && echo yes || echo no)
+NVSHMEM_HOME ?= /usr/lib/aarch64-linux-gnu
+NVSHMEM_INCLUDE = -I/usr/include/nvshmem
+NVSHMEM_LIB = -L$(NVSHMEM_HOME) -lnvshmem_host $(NVSHMEM_HOME)/libnvshmem_device.a
+HAS_NVSHMEM := $(shell test -f /usr/lib/aarch64-linux-gnu/libnvshmem_host.so && echo yes || echo no)
 
-NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS)
+NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) -rdc=true
 SUFFIX = $(TARGET_SUFFIX)
 
 NVSHMEM_TARGETS = nvshmem_8gpu_examples nvshmem_advanced_8gpu nvshmem_multinode_example \

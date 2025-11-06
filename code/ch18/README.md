@@ -8,12 +8,12 @@ Attention is the core bottleneck in transformer inference and training. This cha
 
 After completing this chapter, you can:
 
-- ✅ Implement FlashAttention for memory-efficient attention
-- ✅ Use FlexAttention for document masking and custom patterns
-- ✅ Apply MLA to reduce KV cache by 4-8x
-- ✅ Optimize sliding window and block-diagonal attention
-- ✅ Profile attention kernels and identify bottlenecks
-- ✅ Choose the right attention variant for your use case
+- [OK] Implement FlashAttention for memory-efficient attention
+- [OK] Use FlexAttention for document masking and custom patterns
+- [OK] Apply MLA to reduce KV cache by 4-8x
+- [OK] Optimize sliding window and block-diagonal attention
+- [OK] Profile attention kernels and identify bottlenecks
+- [OK] Choose the right attention variant for your use case
 
 ## Prerequisites
 
@@ -115,8 +115,8 @@ Naive Attention:
   Memory: 4.2 GB
 
 FlashAttention:
-  Time: 38 ms (3.8x faster) ✅
-  Memory: 0.6 GB (7x less) ✅
+  Time: 38 ms (3.8x faster) [OK]
+  Memory: 0.6 GB (7x less) [OK]
 ```
 
 **How to run**:
@@ -522,7 +522,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9, flash-attn 2.5, CUDA 13.0
+**Chapter Status**: [OK] Complete
 

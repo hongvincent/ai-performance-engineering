@@ -5,16 +5,17 @@ Production playbook for standing up, validating, and tuning PyTorch LLM workload
 ---
 
 ## Overview
-**Target hardware:** NVIDIA Blackwell B200/B300 (sm100/103), Grace Blackwell GB200/GB300 (sm100/sm103), and DGX Spark GB10 (sm121)
+**Target hardware:** 
+
+- NVIDIA Blackwell (B200/B300, sm100)
+- Grace Blackwell (GB200/GB300, sm103)
+- DGX Spark (GB10, sm121)
 
 **Reference stack:** CUDA 13+, PyTorch 2.9+, Triton 3.5+, and Python 3.10+
 
 The repository packages everything needed to:
 - Provision a reproducible software stack (`setup.sh`) for new lab machines.
 - Exercise and benchmark the platform end-to-end before deploying workloads.
-- Dive into architecture, profiling, and troubleshooting guides when deeper work is required.
-
-If you are exploring the broader curriculum, see the chapter index in `docs/README.md`.
 
 ## Quick Start
 
@@ -28,71 +29,93 @@ If you are exploring the broader curriculum, see the chapter index in `docs/READ
    ```bash
    git clone <repo-url> && cd ai-performance-engineering/code
    ```
-2. Run the automated bootstrap (installs drivers, CUDA, Python deps, and validation tooling):
+2. Run the automated bootstrap:
    ```bash
    sudo ./setup.sh
    ```
 3. If the script upgrades the driver, reboot and rerun `sudo ./setup.sh` to finish verification.
-4. Optional extras—Docker images, multi-node orchestration, or single-GPU serving—documented in:
-   - `docs/guides/READY_TO_RUN_GUIDE.md` (benchmark presets and profiles)
-   - `docs/guides/single_gpu_serving_guide.md` (production serving playbook)
-   - `docs/playbooks/nvlink_pcie_playbook.md` (topology tuning)
 
-### Configuration
-- Environment knobs for specific benchmarks: see `docs/guides/READY_TO_RUN_GUIDE.md`
-- Architecture-specific tuning (tensor parallelism, FlexAttention settings, etc.): see `docs/guides/architecture_guides.md` and `docs/guides/OPTIMIZATION_QUICK_START.md`
 
-## Verification
+## Verification & Testing
+
+### Quick Verification
 Run the quick smoke tests after installation:
 1. Confirm the hardware and driver:
    ```bash
    nvidia-smi
    ```
    Expect eight B200 GPUs and driver 580+.
-2. Execute the automated test suite (covers CUDA samples and PyTorch checks):
+2. Verify benchmarks can load (syntax + import check):
    ```bash
-   ./run_all_tests.sh
+   python3 tools/verification/verify_all_benchmarks.py
    ```
-3. Verify TMA support on Grace-Blackwell GB10 (if applicable):
-   ```bash
-   ./verify_tma_sm121.py
-   ```
-4. Capture a baseline performance snapshot:
-   ```bash
-   python3 benchmark_peak.py
-   ```
-   Compare results with `docs/reference/performance_baseline.md`. For a full validation matrix, follow `docs/planning/llm_validation_checklist.md`.
 
-## Deep Dives & Troubleshooting
-- **Architecture & deployment:** `docs/guides/architecture_guides.md`, `docs/guides/migration_to_sm100.md`, `docs/playbooks/moe_deployment_playbook.md`
-- **Performance & profiling:** `docs/guides/OPTIMIZATION_QUICK_START.md`, `docs/reference/nsight_fp8_flexattention.md`, `docs/playbooks/long_context_playbook.md`
-- **Common issues:** `docs/planning/common_issues_faq.md`, `docs/playbooks/torch_compile_troubleshooting.md`, `docs/playbooks/nvlink_pcie_playbook.md`
-- **Tooling quick reference:** `docs/reference/TOOLS_QUICK_REFERENCE.md`, `docs/guides/READY_TO_RUN_GUIDE.md`
+### Running All Benchmarks
+**Use `benchmark.py` - it's the unified entry point for running benchmarks:**
 
-## More Resources
-- **Validation status:** `docs/planning/llm_validation_checklist.md`, `docs/reference/performance_baseline.md`, `docs/reference/power_efficiency_baselines.md`
-- **Playbooks & walkthroughs:** `docs/README.md` (chapter index), `docs/guides/8xb200_load_testing_guide.md`, `docs/guides/single_gpu_serving_guide.md`
-- **Active work & enhancements:** `docs/planning/TODO.md`, `docs/planning/future_optimizations.md`
-- **Reference materials:** `docs/reference/MODEL_SIZE_RECOMMENDATIONS.md`, `docs/reference/B200_CUDA13_AUDIT.md`
+```bash
+# Run ALL benchmarks (discover + run + summarize)
+python benchmark.py
+
+# Run single chapter (accepts number or ch prefix)
+python benchmark.py --chapter 12
+python benchmark.py --chapter ch12
+```
+
+**What it does:**
+- Discovers all `baseline_*.py` / `optimized_*.py` pairs across all chapters
+- Runs actual benchmarks using BenchmarkHarness
+- Measures performance (baseline vs optimized) and calculates speedups
+- **Automatically detects and skips hardware/software limitations** with clear notifications
+- Resets CUDA state between benchmarks to prevent cascading failures
+- Generates summary reports:
+  - `benchmark_test_results.json` - Machine-readable detailed results
+  - `benchmark_test_results.md` - Human-readable markdown summary (includes skipped benchmarks)
+
+**Exit codes:** `0` = all passed, `1` = some failed (perfect for CI/CD)
+
+**Hardware Limitations:** Benchmarks that cannot run due to hardware/software incompatibilities are automatically skipped with clear notifications.
+
+### Peak Performance Validation
+During `setup.sh`, the system automatically runs `benchmark_peak.py` to capture actual peak hardware performance metrics:
+- HBM memory bandwidth
+- FP4 compute TFLOPS (if available)
+- FP6 compute TFLOPS (if available)
+- FP8 compute TFLOPS (if available)
+- FP16 compute TFLOPS
+- L2 cache bandwidth
+- Shared memory (L1-equivalent) characteristics
+- GPU hardware information (SMs, cache sizes, registers, etc.)
+- NVLink bandwidth (if multi-GPU available)
+- torch.compile speedup
+
+These measured values are saved to `benchmark_peak_results_*.json` and used as dynamic performance targets instead of hardcoded values. The `performance_targets.py` system automatically loads these measured values and uses them for validation.
+
+**Automatic execution**: If `benchmark_peak_results_*.json` files don't exist, `benchmark.py` will automatically run peak detection (~30-60 seconds) before running benchmarks. The system gracefully continues even if peak detection fails.
+
+To manually re-run peak benchmarks:
+```bash
+python tools/benchmarking/benchmark_peak.py
+```
+
+**Note**: Use `python benchmark.py` for all benchmark testing and comparison.
 
 ## Repository Layout
 ```text
 code/
 ├── setup.sh                # End-to-end system bootstrap
-├── docs/                   # Architecture, optimization, troubleshooting guides
 ├── ch1...ch20/             # Chapter walkthroughs with focused READMEs
 ├── scripts/                # Capture and profiling helpers
 ├── tools/                  # Verification utilities
-└── tests/                  # Automated checks invoked by run_all_tests.sh
+└── tests/                  # PyTorch regression tests (`pytest -v tests/`)
 ```
 
 ## Cleanup Generated Artifacts
-- Inspect what would be removed: `./cleanup_generated_outputs.sh`
-- Remove everything for the default categories: `./cleanup_generated_outputs.sh --apply`
-- Target specific categories (e.g., caches only): `./cleanup_generated_outputs.sh --only caches --apply`
-- Skip categories you want to keep (e.g., profiling data): `./cleanup_generated_outputs.sh --skip profiles --apply`
+Remove generated artifacts, caches, and binaries:
+```bash
+python cleanup.py
+```
 
 ## Next Steps
-- Track open work in `docs/planning/TODO.md` and planned enhancements in `docs/planning/future_optimizations.md`
-- Record measured metrics or new findings in `docs/reference/performance_baseline.md` and related docs under `docs/`
-- For questions or new issues, start with `docs/planning/common_issues_faq.md` then escalate via the team's issue tracker
+- Record measured metrics or new findings for future reference
+- For questions or new issues, escalate via the team's issue tracker

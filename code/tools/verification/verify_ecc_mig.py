@@ -47,9 +47,9 @@ def main() -> int:
         print(f"  MIG mode: {mig_display}")
 
         if ecc_valid and ecc_mode.lower() != "off":
-            print("  ⚠️  ECC enabled – can reduce peak memory bandwidth. Disable if not required.")
+            print("  WARNING: ECC enabled – can reduce peak memory bandwidth. Disable if not required.")
         if mig_valid and mig_mode.lower() != "disabled":
-            print("  ⚠️  MIG partitions active – total SMs/memory are reduced.")
+            print("  WARNING: MIG partitions active – total SMs/memory are reduced.")
         print()
 
     print("[verify_ecc_mig] Review warnings above for ECC/MIG impact on performance.")

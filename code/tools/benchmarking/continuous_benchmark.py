@@ -69,11 +69,11 @@ def main() -> None:
         payload = run_command(job)
         results.append(payload)
         if payload["returncode"] != 0:
-            print(f"  ❌ Benchmark failed (rc={payload['returncode']})")
+            print(f"  ERROR: Benchmark failed (rc={payload['returncode']})")
             if args.stop_on_fail:
                 break
         else:
-            print(f"  ✅ Completed in {payload['duration_sec']:.2f}s")
+            print(f"  [OK] Completed in {payload['duration_sec']:.2f}s")
 
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")

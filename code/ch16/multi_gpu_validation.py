@@ -2,13 +2,19 @@
 Utility script to sanity-check tensor-parallel execution of the GPT benchmark model.
 
 Example:
-    python ch16/multi_gpu_validation.py --tensor-parallel-gpus 4 --dtype bfloat16
+    python extras/ch16/multi_gpu_validation.py --tensor-parallel-gpus 4 --dtype bfloat16
 """
 
 from __future__ import annotations
 
-import argparse
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+import argparse
 from pathlib import Path
 
 import torch

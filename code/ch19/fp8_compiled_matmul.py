@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 FP8 Quantization with torch.compile Integration
 
@@ -15,11 +25,9 @@ Architecture support:
 - Older: Emulated (slow)
 """
 
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import arch_config
 
 import torch
 import torch.nn as nn
@@ -143,13 +151,13 @@ def main():
     
     has_fp8, arch_info = detect_fp8_support()
     print(f"\nArchitecture: {arch_info}")
-    print(f"FP8 Support: {'✅ YES' if has_fp8 else '❌ NO'}")
+    print(f"FP8 Support: {'[OK] YES' if has_fp8 else 'ERROR: NO'}")
     
     if not has_fp8:
-        print("\n⚠️  This demo requires Blackwell (SM 10.0+) for native FP8 support")
+        print("\nWARNING: This demo requires Blackwell (SM 10.0+) for native FP8 support")
         print("   Running in emulation mode (slower than native FP8)\n")
     else:
-        print(f"\n✅ Blackwell FP8 Capabilities:")
+        print(f"\n[OK] Blackwell FP8 Capabilities:")
         print(f"  • Peak FP8: 450 TFLOPS")
         print(f"  • Peak FP16: 225 TFLOPS")
         print(f"  • Expected speedup: ~2x for matmul\n")
@@ -285,13 +293,13 @@ def main():
     print("=" * 80)
     
     if has_fp8:
-        print("✅ Blackwell FP8 Benefits:")
+        print("[OK] Blackwell FP8 Benefits:")
         print("  • 2x GEMM throughput vs FP16 (450 vs 225 TFLOPS)")
         print("  • 4x memory savings vs FP32")
         print("  • Native hardware support (no emulation overhead)")
         print("  • torch.compile generates optimized FP8 kernels")
     else:
-        print("⚠️  For best FP8 performance:")
+        print("WARNING: For best FP8 performance:")
         print("  • Requires Blackwell (SM 10.0+)")
         print("  • Native FP8 tensor cores")
         print("  • This emulation is 10-100x slower than native")

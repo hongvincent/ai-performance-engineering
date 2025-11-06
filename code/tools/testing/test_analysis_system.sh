@@ -92,10 +92,6 @@ python3 tools/analyze_results.py --input "$TEST_DIR" --output "$TEST_DIR/analysi
 echo ""
 echo "Analysis complete!"
 echo ""
-echo "Quick summary:"
-python3 tools/analyze_results.py --input "$TEST_DIR" --quick
-
-echo ""
 echo "Full report saved to: $TEST_DIR/analysis.md"
 echo ""
 
@@ -105,5 +101,4 @@ cat "$TEST_DIR/analysis.md"
 
 echo ""
 echo "Test complete! Test directory can be found at: $TEST_DIR"
-
 

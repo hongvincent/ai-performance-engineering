@@ -8,12 +8,12 @@ High occupancy and instruction-level parallelism (ILP) help GPUs hide latency an
 
 After completing this chapter, you can:
 
-- ✅ Understand occupancy and its impact on performance
-- ✅ Tune occupancy by balancing resources (registers, shared memory, threads)
-- ✅ Apply instruction-level parallelism to hide latency
-- ✅ Manage register pressure to maintain high occupancy
-- ✅ Identify and mitigate warp divergence
-- ✅ Use loop unrolling for performance gains
+- [OK] Understand occupancy and its impact on performance
+- [OK] Tune occupancy by balancing resources (registers, shared memory, threads)
+- [OK] Apply instruction-level parallelism to hide latency
+- [OK] Manage register pressure to maintain high occupancy
+- [OK] Identify and mitigate warp divergence
+- [OK] Use loop unrolling for performance gains
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ Occupancy = Active_Warps_Per_SM / Maximum_Warps_Per_SM
           = (Active_Blocks × Threads_Per_Block / 32) / Max_Warps
 ```
 
-**For B200**:
+**For NVIDIA GPU**:
 - Max warps per SM: 64
 - Max threads per SM: 2048 (64 warps × 32 threads)
 - Max blocks per SM: 32
@@ -41,7 +41,7 @@ Occupancy = Active_Warps_Per_SM / Maximum_Warps_Per_SM
 
 ### Occupancy Limiters
 
-| Resource | B200 Limit | Impact |
+| Resource | NVIDIA GPU Limit | Impact |
 |----------|------------|--------|
 | **Registers** | 65,536 per SM | High register usage → Fewer active blocks |
 | **Shared Memory** | 256 KB per SM | Large shared memory → Fewer active blocks |
@@ -113,7 +113,7 @@ Low Resource Kernel:
   
 High Resource Kernel:
   Occupancy: 50%
-  Throughput: 720 GB/s ✅
+  Throughput: 720 GB/s [OK]
 
 Conclusion: Higher performance despite lower occupancy!
 ```
@@ -360,7 +360,7 @@ Given:
 - Registers per thread: 32
 - Shared memory per block: 8 KB
 
-Limits for B200:
+Limits for NVIDIA GPU:
 - Max warps per SM: 64
 - Max threads per SM: 2048
 - Max blocks per SM: 32
@@ -375,7 +375,7 @@ Calculate:
 
 Limiting factor: Registers (8 blocks)
 Active warps: 8 blocks × 8 warps = 64 warps
-Occupancy: 64 / 64 = 100% ✅
+Occupancy: 64 / 64 = 100% [OK]
 ```
 
 ### Using CUDA API
@@ -501,6 +501,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU, CUDA 13.0, sm_100 architecture
+**Chapter Status**: [OK] Complete
+

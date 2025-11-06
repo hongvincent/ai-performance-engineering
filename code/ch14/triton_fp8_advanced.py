@@ -20,13 +20,22 @@ Performance:
 
 Author: Blackwell Optimization Project
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 
 # Add parent directory to path to import arch_config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import arch_config  # noqa: F401 - Configure Blackwell optimizations
+
+os.environ.setdefault("TRITON_ALLOW_NON_CONSTEXPR_GLOBALS", "1")  # TODO(cfregly): drop once kernels stop relying on globals
 
 import torch
 import triton
@@ -511,6 +520,15 @@ def benchmark_fp8_layernorm():
 
 
 if __name__ == "__main__":
+    if not torch.cuda.is_available():
+        print("CUDA not available; skipping Triton FP8 benchmarks.")
+        sys.exit(0)
+
+    cc = torch.cuda.get_device_capability()
+    if cc != (10, 0):
+        print(f"Skipping Triton FP8 benchmarks: requires Blackwell SM 10.0, detected SM {cc[0]}.{cc[1]}.")
+        sys.exit(0)
+
     print("=== Triton 3.5 Advanced FP8 Kernels ===")
     print(f"FP8 Available: {FP8_AVAILABLE}")
     

@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
+
 """
 Inspecting torch.compile Generated Code
 
 Shows how to dump and inspect compiled kernels to understand
 what optimizations torch.compile applies to transformer blocks.
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
 import os
 
 # Add parent directory to path to import arch_config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import arch_config  # noqa: F401 - Configure Blackwell optimizations
 
 import torch
 import torch.nn as nn
@@ -117,7 +123,7 @@ def inspect_compiled_code():
     with torch.no_grad():
         output = compiled_model(x)
     
-    print("✓ Compilation complete!")
+    print("Compilation complete!")
     print()
     
     # Show what was generated
@@ -167,7 +173,7 @@ def inspect_compiled_code():
                 
                 break
     else:
-        print("⚠️  Generated code not found in expected location")
+        print("WARNING: Generated code not found in expected location")
         print("    Set TORCH_COMPILE_DEBUG=1 to enable code dumps")
     
     print()

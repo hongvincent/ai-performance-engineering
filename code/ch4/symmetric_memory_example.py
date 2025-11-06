@@ -10,14 +10,18 @@ Requirements:
 
 Expected Runtime: ~5-10 seconds on 2 GPUs
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -100,7 +104,7 @@ def enable_nvlink_c2c_optimizations() -> None:
     
     # 1. Enable peer access between all GPU pairs
     for i in range(num_gpus):
-    torch.cuda.set_device(i)
+        torch.cuda.set_device(i)
         for j in range(num_gpus):
             if i != j:
                 try:
@@ -109,7 +113,7 @@ def enable_nvlink_c2c_optimizations() -> None:
                     if can_access:
                         # This is automatically enabled in modern PyTorch
                         # but we document it for educational purposes
-                        print(f"✓ P2P access enabled: GPU {i} <-> GPU {j}")
+                        print(f"P2P access enabled: GPU {i} <-> GPU {j}")
                 except RuntimeError as e:
                     print(f"✗ P2P access failed: GPU {i} <-> GPU {j}: {e}")
     
@@ -129,7 +133,7 @@ def enable_nvlink_c2c_optimizations() -> None:
     
     print("\nNVLink-C2C Features:")
     if is_grace_blackwell:
-        print("  ✓ GB200/GB300 detected:")
+        print("  GB200/GB300 detected:")
         print("    - CPU-GPU: ~900 GB/s (coherent)")
         print("    - GPU-GPU: 1800 GB/s NVLink 5.0")
         print("    - Unified memory address space")
@@ -361,7 +365,7 @@ def demonstrate_gb200_unified_memory() -> None:
         print("=" * 80)
         return
     
-    print("✓ GB200/GB300 detected!")
+    print("GB200/GB300 detected!")
     print("\nKey Features:")
     print("  1. Coherent CPU-GPU memory")
     print("  2. 900 GB/s NVLink-C2C bandwidth")
@@ -403,10 +407,10 @@ def demonstrate_gb200_unified_memory() -> None:
     print(f"  Efficiency: {(bandwidth / 800) * 100:.1f}%")
     
     print("\nUse Cases for GB200/GB300:")
-    print("  ✓ CPU data loading → Grace memory → GPU training")
-    print("  ✓ CPU preprocessing (tokenization) + GPU inference")
-    print("  ✓ Large batch prep on CPU, compute on GPU")
-    print("  ✓ Checkpoint to CPU memory (480GB-1TB)")
+    print("  CPU data loading → Grace memory → GPU training")
+    print("  CPU preprocessing (tokenization) + GPU inference")
+    print("  Large batch prep on CPU, compute on GPU")
+    print("  Checkpoint to CPU memory (480GB-1TB)")
     
     print("=" * 80)
 
@@ -438,7 +442,7 @@ def main():
         print("PyTorch 2.9 Symmetric Memory Benchmark")
         print(f"World size: {world_size} GPUs")
         if is_8gpu:
-            print("✓ 8x B200 configuration detected")
+            print("8x B200 configuration detected")
         print("=" * 80)
     
     # Run 8-GPU specific benchmarks if applicable

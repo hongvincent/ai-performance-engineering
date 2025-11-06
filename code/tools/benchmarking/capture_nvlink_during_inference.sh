@@ -186,7 +186,7 @@ cat > "${OUTPUT_DIR}/SUMMARY.md" << EOL
 
 ## Status
 
-$(if [ ${WORKLOAD_SUCCESS} -eq 1 ]; then echo "✅ **SUCCESS**: Workload completed"; else echo "❌ **FAILURE**: Workload encountered errors"; fi)
+$(if [ ${WORKLOAD_SUCCESS} -eq 1 ]; then echo "[OK] **SUCCESS**: Workload completed"; else echo "ERROR: **FAILURE**: Workload encountered errors"; fi)
 
 ## Next Steps
 
@@ -228,7 +228,7 @@ echo "  nvidia-smi nvlink -gt d"
 echo ""
 
 if [ ${WORKLOAD_SUCCESS} -eq 1 ]; then
-    echo -e "${GREEN}✅ Capture completed successfully!${NC}"
+    echo -e "${GREEN}[OK] Capture completed successfully!${NC}"
     exit 0
 else
     echo -e "${YELLOW}⚠ Workload completed with warnings${NC}"

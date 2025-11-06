@@ -111,7 +111,7 @@ def generate_markdown_report(results: List[BenchmarkData], output_file: Path):
         f.write("---\n\n")
         
         # Summary Table
-        f.write("## 📊 Performance Summary\n\n")
+        f.write("## Performance Summary\n\n")
         f.write("### FP8 Matmul Benchmark (M=N=K=1024)\n\n")
         
         f.write("| Precision | Time (ms) | TFLOPS | Memory (MB) | Throughput (tok/s) | Speedup |\n")
@@ -127,7 +127,7 @@ def generate_markdown_report(results: List[BenchmarkData], output_file: Path):
         f.write("\n")
         
         # Visual Charts (ASCII)
-        f.write("## 📈 Visual Comparison\n\n")
+        f.write("## Visual Comparison\n\n")
         
         f.write("### Speedup vs Baseline\n\n")
         f.write("```\n")
@@ -141,7 +141,7 @@ def generate_markdown_report(results: List[BenchmarkData], output_file: Path):
             f.write("\n```\n\n")
         
         # Key Findings
-        f.write("## 🎯 Key Findings\n\n")
+        f.write("## Key Findings\n\n")
         
         if len(results) >= 2:
             baseline = results[0]
@@ -170,7 +170,7 @@ def generate_markdown_report(results: List[BenchmarkData], output_file: Path):
         f.write("\n")
         
         # Expected on Blackwell
-        f.write("## ⭐ Expected Performance on Blackwell B200\n\n")
+        f.write("## Expected Performance on Blackwell B200\n\n")
         f.write("| Precision | Peak TFLOPS | Memory Savings | Use Case |\n")
         f.write("|-----------|-------------|----------------|----------|\n")
         f.write("| **FP4** | **~1600** | **75%** | Draft models, speculative decoding |\n")
@@ -180,7 +180,7 @@ def generate_markdown_report(results: List[BenchmarkData], output_file: Path):
         f.write("| FP32 | ~225 | - | Full precision |\n\n")
         
         # Recommendations
-        f.write("## 💡 Recommendations\n\n")
+        f.write("## Recommendations\n\n")
         f.write("Based on profiling results:\n\n")
         f.write("1. **For Production Inference**: Use **FP8** on Blackwell B200 (2x throughput)\n")
         f.write("2. **For Draft Models**: Use **FP4** for speculative decoding (7x faster)\n")
@@ -232,7 +232,9 @@ def generate_ascii_summary(results: List[BenchmarkData], output_file: Path):
 
 def main():
     """Main function"""
-    base_dir = Path("/home/cfregly/ai-performance-engineering/code")
+    # Get repo root (parent of tools/utilities/)
+    script_dir = Path(__file__).parent
+    base_dir = script_dir.parent.parent
     results_dir = base_dir / "validation_results"
     results_file = results_dir / "fp8_matmul_results.json"
     
@@ -246,11 +248,11 @@ def main():
     results = load_results(results_file)
     
     if not results:
-        print("❌ No results found. Run validation first:")
+        print("No results found. Run validation first:")
         print("   python ch19/validate_quantization_performance.py --example fp8_matmul")
         return 1
     
-    print(f"✓ Loaded {len(results)} benchmark results")
+    print(f"Loaded {len(results)} benchmark results")
     print()
     
     # Generate reports
@@ -259,14 +261,14 @@ def main():
     
     print("Generating reports...")
     generate_markdown_report(results, markdown_file)
-    print(f"✓ Markdown report: {markdown_file}")
+    print(f"Markdown report: {markdown_file}")
     
     generate_ascii_summary(results, ascii_file)
-    print(f"✓ ASCII summary: {ascii_file}")
+    print(f"ASCII summary: {ascii_file}")
     
     print()
     print("="*80)
-    print("✅ Comparison reports generated!")
+    print("Comparison reports generated!")
     print("="*80)
     print()
     print("View reports:")
@@ -284,5 +286,4 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
-
 

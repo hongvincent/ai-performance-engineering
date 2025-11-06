@@ -1,4 +1,7 @@
-// nvtx_profiling.cu -- NVTX ranges for inference pipelines (build with -std=c++17 -lnvToolsExt).
+// nvtx_profiling.cu -- NVTX ranges for inference pipelines (CUDA 13 / NVTX v3 header-only).
+// Build (Linux):
+//   nvcc nvtx_profiling.cu -std=c++17 -O3 -lineinfo -o nvtx_profiling
+// NOTE: NVTX v3 is header-only on CUDA 12.9+/13.0; do NOT link -lnvToolsExt.
 
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
@@ -85,7 +88,7 @@ class SimpleModel {
 };
 
 int main() {
-  std::printf("Build with: nvcc nvtx_profiling.cu -std=c++17 -lnvToolsExt\n");
+  std::printf("Build example: nvcc nvtx_profiling.cu -std=c++17 -O3 -lineinfo -o nvtx_profiling\n");
 
   SimpleModel model;
   std::vector<Token> prompt(32);

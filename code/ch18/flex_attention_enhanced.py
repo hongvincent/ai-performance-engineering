@@ -11,17 +11,37 @@ Architecture-aware optimizations:
 - B200: Optimized for HBM3e bandwidth patterns
 - GB10: Leverages NVLink-C2C for large sequence handling
 """
+import pathlib
 import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import arch_config  # Configure Blackwell optimizations
+import copy
 
 import torch
 import torch.nn as nn
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 import time
-from typing import Optional
+from typing import Optional, Tuple
+
+QUICK_MODE = any(
+    os.getenv(flag, "0") == "1"
+    for flag in ("QUICK_PROFILE", "BENCHMARK_QUICK", "RUN_ALL_CHAPTERS")
+)
+DEFAULT_COMPILE_MODE = "reduce-overhead" if QUICK_MODE else "default"
+COMPILE_MODE = os.getenv("TORCH_COMPILE_MODE", DEFAULT_COMPILE_MODE)
+COMPILE_KWARGS = {"mode": COMPILE_MODE, "dynamic": None}
+DTYPE = torch.bfloat16
+BASE_WARMUP = 5 if QUICK_MODE else 50
+BASE_ITERS = 10 if QUICK_MODE else 200
+COMPILED_WARMUP = 10 if QUICK_MODE else 100
 
 
 def _is_known_compile_failure(error_text: str) -> bool:
@@ -31,6 +51,7 @@ def _is_known_compile_failure(error_text: str) -> bool:
         "ptxas" in lowered
         or "novalidchoiceserror" in lowered
         or "gpu-name" in lowered
+        or "internaltorchdynamoerror" in lowered
     )
 
 
@@ -45,6 +66,11 @@ def configure_for_enhanced_flex_attention():
     print("=" * 80)
     print("Enhanced FlexAttention Configuration")
     print("=" * 80)
+    if QUICK_MODE:
+        print(" Quick mode active (reduced sizes / iterations)")
+    
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cudnn.conv.fp32_precision = "tf32"
     
     # Enable all attention backends
     torch.backends.cuda.enable_flash_sdp(True)
@@ -60,7 +86,7 @@ def configure_for_enhanced_flex_attention():
         if hasattr(cfg, "aggressive_fusion"):
             cfg.aggressive_fusion = True
     
-    print("✓ Configuration complete\n")
+    print("Configuration complete\n")
 
 
 class SlidingWindowCausalAttention(nn.Module):
@@ -149,14 +175,25 @@ class DynamicSlidingWindowAttention(nn.Module):
             else:
                 w = 999999  # Full attention
             self.window_sizes.append(w)
-        
+
+        self.register_buffer(
+            "window_sizes_tensor",
+            torch.tensor(self.window_sizes, dtype=torch.int32),
+            persistent=False,
+        )
+
         def _mask_fn(b, h, q_idx, kv_idx):
             # Different window per head
-            window_size = self.window_sizes[h]
+            window_sizes = self.window_sizes_tensor.to(q_idx.device)
+            if isinstance(h, torch.Tensor):
+                idx = h.to(torch.long)
+            else:
+                idx = torch.tensor(h, device=q_idx.device, dtype=torch.long)
+            window_size = torch.take(window_sizes, idx)
             window = (q_idx - kv_idx).abs() <= window_size
             causal = q_idx >= kv_idx
             return causal & window
-        
+
         self.mask_fn = _mask_fn
     
     def forward(self, Q, K, V):
@@ -165,28 +202,93 @@ class DynamicSlidingWindowAttention(nn.Module):
         return flex_attention(Q, K, V, block_mask=block_mask)
 
 
-def benchmark_attention(model, Q, K, V, name, num_warmup=50, num_iters=200):
-    """Benchmark attention implementation"""
+def compile_module(module: nn.Module, label: str) -> Tuple[nn.Module, bool]:
+    """Compile module with torch.compile, falling back to eager when needed."""
+    try:
+        module_to_compile = module
+        try:
+            module_to_compile = copy.deepcopy(module)
+        except Exception:
+            module_to_compile = module
+        compiled = torch.compile(module_to_compile, **COMPILE_KWARGS)
+        return compiled, True
+    except Exception as exc:  # noqa: BLE001 - surface and handle compile issues
+        summary = _summarize_error_text(str(exc))
+        print(f"  Compilation failed for {label}: {summary}")
+        if not QUICK_MODE and not _is_known_compile_failure(str(exc)):
+            raise
+        print("  Falling back to eager execution for this pattern.")
+        return module, False
+
+
+def benchmark_attention(
+    model,
+    Q,
+    K,
+    V,
+    name,
+    *,
+    num_warmup: int = 50,
+    num_iters: int = 200,
+    eager_fallback=None,
+):
+    """Benchmark attention implementation. Returns (time_ms, used_compiled)."""
     print(f"\nBenchmarking: {name}")
-    
-    # Warmup
-    for _ in range(num_warmup):
-        with torch.no_grad():
-            _ = model(Q, K, V)
-    torch.cuda.synchronize()
-    
-    # Benchmark
-    start = time.perf_counter()
-    for _ in range(num_iters):
-        with torch.no_grad():
-            _ = model(Q, K, V)
-    torch.cuda.synchronize()
+    if QUICK_MODE:
+        num_warmup = min(num_warmup, BASE_WARMUP)
+        num_iters = min(num_iters, BASE_ITERS)
+
+    try:
+        with torch.inference_mode():
+            for _ in range(num_warmup):
+                _ = model(Q, K, V)
+        torch.cuda.synchronize()
+
+        start = time.perf_counter()
+        with torch.inference_mode():
+            for _ in range(num_iters):
+                _ = model(Q, K, V)
+        torch.cuda.synchronize()
+    except NotImplementedError as exc:
+        fallback_allowed = eager_fallback is not None
+        if fallback_allowed:
+            print("  Compiled path raised NotImplementedError; falling back to eager execution.")
+            return benchmark_attention(
+                eager_fallback,
+                Q,
+                K,
+                V,
+                name,
+                num_warmup=num_warmup,
+                num_iters=num_iters,
+                eager_fallback=None,
+            )
+        raise exc
+    except Exception as exc:  # noqa: BLE001
+        fallback_allowed = eager_fallback is not None and (QUICK_MODE or _is_known_compile_failure(str(exc)))
+        if fallback_allowed:
+            print("  Compiled path raised an exception; falling back to eager execution.")
+            return benchmark_attention(
+                eager_fallback,
+                Q,
+                K,
+                V,
+                name,
+                num_warmup=num_warmup,
+                num_iters=num_iters,
+                eager_fallback=None,
+            )
+        raise
+
     elapsed = time.perf_counter() - start
-    
     avg_time_ms = (elapsed / num_iters) * 1000
     print(f"  Average time: {avg_time_ms:.2f} ms")
-    
-    return avg_time_ms
+
+    used_compiled = True
+    if isinstance(model, torch.nn.Module) and getattr(model, "_orig_mod", None) is None:
+        used_compiled = False
+
+    return avg_time_ms, used_compiled
 
 
 def detect_architecture():
@@ -221,9 +323,9 @@ def main():
         print(f"Generic GPU (SM {major}.{minor})")
     
     # Test configuration
-    batch_size = 4
-    num_heads = 16
-    seq_len = 4096  # Longer sequence to show benefits
+    batch_size = 2 if QUICK_MODE else 4
+    num_heads = 8 if QUICK_MODE else 16
+    seq_len = 1024 if QUICK_MODE else 4096  # Longer sequence to show benefits
     head_dim = 64
     
     print(f"\nTest Configuration:")
@@ -233,12 +335,13 @@ def main():
     print(f"  Head dim: {head_dim}")
     
     # Create inputs
-    Q = torch.randn(batch_size, num_heads, seq_len, head_dim, device='cuda', dtype=torch.float32)
-    K = torch.randn(batch_size, num_heads, seq_len, head_dim, device='cuda', dtype=torch.float32)
-    V = torch.randn(batch_size, num_heads, seq_len, head_dim, device='cuda', dtype=torch.float32)
+    Q = torch.randn(batch_size, num_heads, seq_len, head_dim, device="cuda", dtype=DTYPE)
+    K = torch.randn_like(Q)
+    V = torch.randn_like(Q)
+    bytes_per_tensor = Q.numel() * Q.element_size()
     
-    print(f"  Memory per tensor: {Q.numel() * 4 / 1e6:.2f} MB")
-    print(f"  Total memory: {3 * Q.numel() * 4 / 1e6:.2f} MB")
+    print(f"  Memory per tensor: {bytes_per_tensor / 1e6:.2f} MB [{DTYPE}]")
+    print(f"  Total memory: {3 * bytes_per_tensor / 1e6:.2f} MB")
     
     # Baseline: Regular SDPA (full attention)
     print("\n" + "=" * 80)
@@ -247,16 +350,18 @@ def main():
     baseline_time = None
     try:
         baseline_fn = lambda q, k, v: torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
-        baseline_time = benchmark_attention(
+        baseline_time, _ = benchmark_attention(
             lambda Q, K, V: baseline_fn(Q, K, V),
-            Q, K, V,
-            "Full Attention"
+            Q,
+            K,
+            V,
+            "Full Attention",
         )
     except Exception as e:
         print(f"Baseline failed: {e}")
         baseline_time = None
     
-    results = {}
+    results: dict[str, dict[str, object]] = {}
     
     # Test 1: Sliding Window + Causal
     print("\n" + "=" * 80)
@@ -264,24 +369,19 @@ def main():
     print("=" * 80)
     
     model1 = SlidingWindowCausalAttention(window_size=1024).cuda().eval()
-    
-    try:
-        model1_compiled = torch.compile(
-            model1,
-            mode='max-autotune',
-            fullgraph=True,
-            dynamic=False
-        )
-        
-        time1 = benchmark_attention(model1_compiled, Q, K, V, "Sliding Window + Causal", num_warmup=100)
-        results['sliding_window'] = time1
-        if baseline_time:
-            print(f"  Speedup vs baseline: {baseline_time / time1:.2f}x")
-    except Exception as e:
-        if not _is_known_compile_failure(str(e)):
-            raise
-        print(f"  Compilation failed: {_summarize_error_text(str(e))}")
-        results['sliding_window'] = None
+    model1_compiled, model1_compiled_ok = compile_module(model1, "Sliding Window + Causal")
+    time1, used_compiled1 = benchmark_attention(
+        model1_compiled,
+        Q,
+        K,
+        V,
+        "Sliding Window + Causal",
+        num_warmup=COMPILED_WARMUP,
+        eager_fallback=model1,
+    )
+    results["sliding_window"] = {"time": time1, "compiled": model1_compiled_ok and used_compiled1}
+    if baseline_time:
+        print(f"  Speedup vs baseline: {baseline_time / time1:.2f}x")
     
     # Test 2: Local + Global Sparse
     print("\n" + "=" * 80)
@@ -289,49 +389,56 @@ def main():
     print("=" * 80)
     
     model2 = LocalGlobalAttention(local_window=512, global_stride=64).cuda().eval()
-    
-    try:
-        model2_compiled = torch.compile(
-            model2,
-            mode='max-autotune',
-            fullgraph=True,
-            dynamic=False
-        )
-        
-        time2 = benchmark_attention(model2_compiled, Q, K, V, "Local + Global Sparse", num_warmup=100)
-        results['local_global'] = time2
-        if baseline_time:
-            print(f"  Speedup vs baseline: {baseline_time / time2:.2f}x")
-    except Exception as e:
-        if not _is_known_compile_failure(str(e)):
-            raise
-        print(f"  Compilation failed: {_summarize_error_text(str(e))}")
-        results['local_global'] = None
+    model2_compiled, model2_compiled_ok = compile_module(model2, "Local + Global Sparse")
+    time2, used_compiled2 = benchmark_attention(
+        model2_compiled,
+        Q,
+        K,
+        V,
+        "Local + Global Sparse",
+        num_warmup=COMPILED_WARMUP,
+        eager_fallback=model2,
+    )
+    results["local_global"] = {"time": time2, "compiled": model2_compiled_ok and used_compiled2}
+    if baseline_time:
+        print(f"  Speedup vs baseline: {baseline_time / time2:.2f}x")
     
     # Test 3: Dynamic per-head windows
     print("\n" + "=" * 80)
     print("Test 3: Dynamic Per-Head Windows (256/512/1024/full)")
     print("=" * 80)
     
-    model3 = DynamicSlidingWindowAttention(num_heads=num_heads, base_window=256).cuda().eval()
-    
-    try:
-        model3_compiled = torch.compile(
-            model3,
-            mode='max-autotune',
-            fullgraph=True,
-            dynamic=False
+    if QUICK_MODE:
+        print("  Skipping dynamic windows benchmark in quick mode.")
+        results["dynamic_windows"] = {"time": None, "compiled": False}
+    else:
+        model3 = DynamicSlidingWindowAttention(num_heads=num_heads, base_window=256).cuda().eval()
+        model3_compiled = model3
+        model3_compiled_ok = False
+        candidate_module, candidate_ok = compile_module(copy.deepcopy(model3).cuda().eval(), "Dynamic Windows")
+        if candidate_ok:
+            try:
+                with torch.inference_mode():
+                    candidate_module(Q[:, :, :1], K[:, :, :1], V[:, :, :1])
+                model3_compiled = candidate_module
+                model3_compiled_ok = True
+            except Exception:
+                print("  Dynamic windows compile smoke test failed; using eager kernel.")
+        else:
+            print("  Dynamic windows compile unavailable; using eager kernel.")
+
+        time3, used_compiled3 = benchmark_attention(
+            model3_compiled,
+            Q,
+            K,
+            V,
+            "Dynamic Windows",
+            num_warmup=COMPILED_WARMUP,
+            eager_fallback=model3,
         )
-        
-        time3 = benchmark_attention(model3_compiled, Q, K, V, "Dynamic Windows", num_warmup=100)
-        results['dynamic_windows'] = time3
+        results["dynamic_windows"] = {"time": time3, "compiled": model3_compiled_ok and used_compiled3}
         if baseline_time:
             print(f"  Speedup vs baseline: {baseline_time / time3:.2f}x")
-    except Exception as e:
-        if not _is_known_compile_failure(str(e)):
-            raise
-        print(f"  Compilation failed: {_summarize_error_text(str(e))}")
-        results['dynamic_windows'] = None
     
     # Results summary
     print("\n" + "=" * 80)
@@ -343,12 +450,15 @@ def main():
     else:
         print(f"Baseline (Full Attention):     N/A")
     
-    for name, time_ms in results.items():
-        if time_ms:
-            speedup = baseline_time / time_ms if baseline_time else 1.0
-            print(f"{name:30s}: {time_ms:6.2f} ms ({speedup:.2fx})")
+    for name, entry in results.items():
+        time_ms = entry.get("time")
+        compiled_ok = entry.get("compiled", False)
+        note = "" if compiled_ok else " (eager)"
+        if time_ms is None:
+            print(f"{name:30s}: unavailable{note}")
         else:
-            print(f"{name:30s}: Compilation failed")
+            speedup = baseline_time / time_ms if baseline_time else 1.0
+            print(f"{name:30s}: {time_ms:6.2f} ms ({speedup:.2f}x){note}")
     
     # Architecture-specific insights
     print("\n" + "=" * 80)
@@ -356,12 +466,12 @@ def main():
     print("=" * 80)
     
     if arch_type == "gb10":
-        print("✅ GB10 (Grace-Blackwell) Benefits:")
+        print("[OK] GB10 (Grace-Blackwell) Benefits:")
         print("  • NVLink-C2C enables efficient handling of very long sequences")
         print("  • Can keep embeddings/KV cache in CPU memory (900 GB/s access)")
         print("  • Ideal for: 16K-128K token context windows")
     elif arch_type == "b200":
-        print("✅ B200 (Blackwell) Benefits:")
+        print("[OK] B200 (Blackwell) Benefits:")
         print("  • HBM3e (7.8 TB/s) bandwidth for attention patterns")
         print("  • Optimal for: 4K-16K token sequences with sparse patterns")
         print("  • FlexAttention reduces memory from O(n²) to O(n*k)")
@@ -379,4 +489,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

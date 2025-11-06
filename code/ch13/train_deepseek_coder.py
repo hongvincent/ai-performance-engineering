@@ -8,27 +8,48 @@ Demonstrates DeepSeek architecture training with:
 - Proper profiling workflow for large models
 
 Note: Uses DeepSeek Coder 6.7B (manageable size for single GPU)
-For full DeepSeek-V3, see multi-GPU examples in ch13/fsdp_example.py
+For full DeepSeek-V3, see multi-GPU examples in extras/ch13/fsdp_example.py
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
 
 
 import json
-import os
 from contextlib import nullcontext
 
 import torch
 from torch.profiler import ProfilerActivity, profile
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from common.device_utils import get_preferred_device
+
+
+def _select_model() -> tuple[str, int, int]:
+    """Choose an appropriate model/batch based on environment."""
+    override = os.environ.get("DEEPSEEK_CODER_MODEL")
+    quick_mode = (
+        os.environ.get("QUICK_PROFILE") == "1"
+        or os.environ.get("RUN_ALL_CHAPTERS") == "1"
+        or os.environ.get("BENCHMARK_QUICK") == "1"
+        or os.environ.get("SKIP_HEAVY_MODELS") == "1"
+    )
+    if override:
+        return override, BATCH, PROFILE_STEPS
+    if quick_mode:
+        # Tiny GPT-2 stands in for heavy model during CI/automation runs.
+        return "sshleifer/tiny-gpt2", 1, 1
+    return MODEL_NAME, BATCH, PROFILE_STEPS
 
 # Using real DeepSeek Coder model (6.7B parameters)
 # This is a real DeepSeek architecture, not GPT-2!
@@ -39,15 +60,37 @@ PROFILE_STEPS = 3
 
 
 def main() -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    device, cuda_err = get_preferred_device()
+    if cuda_err:
+        print(f"WARNING: CUDA unavailable ({cuda_err}); using CPU.")
+    model_name, batch_size, profile_steps = _select_model()
+    if model_name != MODEL_NAME:
+        print(
+            f"Using lightweight model '{model_name}' "
+            f"(batch_size={batch_size}, profile_steps={profile_steps}) for quick profiling."
+        )
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME).to(device)
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+    except RuntimeError as exc:
+        if "out of memory" in str(exc).lower() and model_name != "sshleifer/tiny-gpt2":
+            # Fallback to tiny model when the requested model exhausts memory.
+            print("Falling back to tiny GPT-2 due to OOM during model load.")
+            model_name = "sshleifer/tiny-gpt2"
+            batch_size = 1
+            profile_steps = 1
+            device = torch.device("cpu")
+            model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+        else:
+            raise
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=device.type == "cuda")
 
-    texts = ["DeepSeek Coder is optimized for code generation." for _ in range(BATCH)]
+    texts = ["DeepSeek Coder is optimized for code generation." for _ in range(batch_size)]
     batch = tokenizer(texts, return_tensors="pt", padding=True).to(device)
     labels = batch["input_ids"].clone()
 
@@ -55,7 +98,8 @@ def main() -> None:
     autocast_ctx = torch.autocast(device_type="cuda") if device.type == "cuda" else nullcontext()
 
     model.train()
-    for _ in range(WARMUP):
+    warmup_steps = min(WARMUP, profile_steps + 1)
+    for _ in range(warmup_steps):
         optimizer.zero_grad(set_to_none=True)
         with autocast_ctx:
             out = model(**batch, labels=labels)
@@ -69,7 +113,7 @@ def main() -> None:
         activities.append(ProfilerActivity.CUDA)
 
     with profile(activities=activities, record_shapes=True, profile_memory=True) as prof:
-        for _ in range(PROFILE_STEPS):
+        for _ in range(profile_steps):
             optimizer.zero_grad(set_to_none=True)
             with autocast_ctx:
                 out = model(**batch, labels=labels)

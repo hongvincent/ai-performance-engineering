@@ -45,9 +45,14 @@ def _set_env(output_dir: Path) -> None:
 
     os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "0")
     os.environ.setdefault("CUDA_CACHE_DISABLE", "0")
-    os.environ.setdefault("PYTORCH_ALLOC_CONF", "max_split_size_mb:128,expandable_segments:True")
-    os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+    # Use new PYTORCH_ALLOC_CONF (preferred), fallback to legacy PYTORCH_CUDA_ALLOC_CONF
+    alloc_conf = os.environ.get("PYTORCH_ALLOC_CONF")
+    legacy_conf = os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+    if alloc_conf is None:
+        alloc_conf = legacy_conf or "max_split_size_mb:256,expandable_segments:True"
+    os.environ["PYTORCH_ALLOC_CONF"] = alloc_conf
     os.environ.setdefault("TORCH_SHOW_CPP_STACKTRACES", "1")
+    os.environ.setdefault("PYTHONFAULTHANDLER", "1")
 
 
 def _load_module(script: Path) -> ModuleType:

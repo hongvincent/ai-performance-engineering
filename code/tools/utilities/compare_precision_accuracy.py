@@ -159,11 +159,11 @@ def generate_comparison_report(
             lines.append(f"- Delta: {delta:+.2f}%\n")
             
             if abs(delta) < 1:
-                lines.append(f"- **Status**: ✅ Negligible accuracy impact (<1%)\n")
+                lines.append(f"- **Status**: [OK] Negligible accuracy impact (<1%)\n")
             elif abs(delta) < 5:
-                lines.append(f"- **Status**: ⚠️ Small accuracy impact (<5%)\n")
+                lines.append(f"- **Status**: WARNING: Small accuracy impact (<5%)\n")
             elif abs(delta) < 10:
-                lines.append(f"- **Status**: ⚠️ Moderate accuracy impact (<10%)\n")
+                lines.append(f"- **Status**: WARNING: Moderate accuracy impact (<10%)\n")
             else:
                 lines.append(f"- **Status**: 🚨 Significant accuracy impact (>10%)\n")
     
@@ -189,7 +189,7 @@ def generate_comparison_report(
     report = "".join(lines)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report)
-    print(f"\n✅ Report saved to: {output_path}")
+    print(f"\n[OK] Report saved to: {output_path}")
 
 
 def main():
@@ -233,7 +233,7 @@ def main():
     )
     
     if not results:
-        print("\n❌ No results collected")
+        print("\nERROR: No results collected")
         return 1
     
     # Generate report
@@ -247,7 +247,7 @@ def main():
     if args.output_json:
         args.output_json.parent.mkdir(parents=True, exist_ok=True)
         args.output_json.write_text(json.dumps(results, indent=2))
-        print(f"✅ JSON metrics saved to: {args.output_json}")
+        print(f"[OK] JSON metrics saved to: {args.output_json}")
     
     print("\n" + "=" * 80)
     print("Comparison complete!")
@@ -258,5 +258,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
 

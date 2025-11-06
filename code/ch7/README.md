@@ -8,17 +8,17 @@ Memory bandwidth is often the limiting factor in GPU performance. This chapter t
 
 After completing this chapter, you can:
 
-- ✅ Understand memory coalescing and achieve near-peak bandwidth
-- ✅ Use vectorized loads/stores for 4x memory throughput
-- ✅ Leverage shared memory for data reuse
-- ✅ Eliminate bank conflicts in shared memory
-- ✅ Implement tiled algorithms for locality
-- ✅ Measure and optimize memory bandwidth utilization
+- [OK] Understand memory coalescing and achieve near-peak bandwidth
+- [OK] Use vectorized loads/stores for 4x memory throughput
+- [OK] Leverage shared memory for data reuse
+- [OK] Eliminate bank conflicts in shared memory
+- [OK] Implement tiled algorithms for locality
+- [OK] Measure and optimize memory bandwidth utilization
 
 ## Prerequisites
 
 **Previous chapters**:
-- [Chapter 2: B200 Hardware](../ch2/README.md) - memory hierarchy
+- [Chapter 2: NVIDIA GPU Hardware](../ch2/README.md) - memory hierarchy
 - [Chapter 6: CUDA Basics](../ch6/README.md) - thread indexing
 
 **Required**: Understanding of memory hierarchy and cache behavior
@@ -55,7 +55,7 @@ __global__ void copyScalar(const float* in, float* out, int n) {
 }
 ```
 
-**Bandwidth**: ~1.2 TB/s on B200 (15% of peak!)
+**Bandwidth**: ~1.2 TB/s on NVIDIA GPU (15% of peak!)
 
 #### Optimized: `vectorized_copy.cu`
 
@@ -70,14 +70,14 @@ __global__ void copyVectorized4(const float4* in, float4* out, int n) {
 }
 ```
 
-**Bandwidth**: ~4.8 TB/s on B200 (60% of peak!) ✅
+**Bandwidth**: ~4.8 TB/s on NVIDIA GPU (60% of peak!) [OK]
 
 **Speedup**: **4x faster!**
 
-**Blackwell optimization**: B200 supports 32-byte vectorized loads (float8):
+**NVIDIA GPU optimization**: NVIDIA GPU supports 32-byte vectorized loads (float8):
 
 ```cpp
-// CUDA 13 / Blackwell: 32-byte aligned loads
+// CUDA 13 / NVIDIA GPU: 32-byte aligned loads
 struct alignas(32) Float8 {
     float x0, y0, z0, w0;
     float x1, y1, z1, w1;
@@ -91,7 +91,7 @@ __global__ void copyVectorized8(const Float8* in, Float8* out, int n) {
 }
 ```
 
-**Bandwidth**: ~6.5 TB/s (81% of peak!) ✅✅
+**Bandwidth**: ~6.5 TB/s (81% of peak!) [OK][OK]
 
 **How to run**:
 ```bash
@@ -121,9 +121,7 @@ __global__ void copyUncoalesced(const float* in, float* out, int n) {
 
 **Why it's slow**: Each thread in warp accesses different cache line → 32 transactions instead of 1!
 
-**Bandwidth**: ~150 GB/s (2% of peak!) ❌
-
-#### Optimized: `coalesced_copy.cu`
+**Bandwidth**: ~150 GB/s (2% of peak!) ERROR: #### Optimized: `coalesced_copy.cu`
 
 **Solution**: Sequential access pattern within warp.
 
@@ -139,7 +137,7 @@ __global__ void copyCoalesced(const float* in, float* out, int n) {
 
 **Why it's fast**: All threads in warp access same cache line → 1 transaction!
 
-**Bandwidth**: ~3.8 TB/s (48% of peak!) ✅
+**Bandwidth**: ~3.8 TB/s (48% of peak!) [OK]
 
 **Speedup**: **25x faster** than uncoalesced!
 
@@ -206,7 +204,7 @@ __global__ void transposePadded(const float* in, float* out, int width, int heig
 
 **Why it works**: Padding shifts columns to different banks.
 
-**Bandwidth**: ~4.2 TB/s (53% of peak!) ✅
+**Bandwidth**: ~4.2 TB/s (53% of peak!) [OK]
 
 **Speedup**: **2x faster** than naive!
 
@@ -361,18 +359,18 @@ Use common profiling tools:
 
 **In Nsight Compute**, look for:
 - **Memory Throughput**: Actual GB/s achieved
-- **Theoretical Bandwidth**: Peak for your GPU (8 TB/s for B200)
+- **Theoretical Bandwidth**: Peak for your GPU (8 TB/s for NVIDIA GPU)
 - **Efficiency %**: Actual / Theoretical
 
-### Performance Targets (B200)
+### Performance Targets (NVIDIA GPU)
 
 | Access Pattern | Bandwidth | Efficiency | Status |
 |----------------|-----------|------------|--------|
-| Scalar loads | 1.2 TB/s | 15% | ❌ Poor |
-| Vectorized (float4) | 4.8 TB/s | 60% | ✅ Good |
-| Vectorized (float8/Blackwell) | 6.5 TB/s | 81% | ✅✅ Excellent |
-| Uncoalesced | 0.15 TB/s | 2% | ❌ Terrible |
-| Coalesced | 3.8 TB/s | 48% | ✅ Good |
+| Scalar loads | 1.2 TB/s | 15% | ERROR: Poor |
+| Vectorized (float4) | 4.8 TB/s | 60% | [OK] Good |
+| Vectorized (float8/NVIDIA GPU) | 6.5 TB/s | 81% | [OK][OK] Excellent |
+| Uncoalesced | 0.15 TB/s | 2% | ERROR: Terrible |
+| Coalesced | 3.8 TB/s | 48% | [OK] Good |
 
 **Reality check**: 40-60% of peak bandwidth is excellent for real kernels!
 
@@ -389,7 +387,7 @@ Achieved_FLOPS = Achieved_Bandwidth × (FLOPS / Byte)
 - Arithmetic intensity: 1 FLOP / 12 bytes (load A, load B, store C)
 - Peak bandwidth: 8 TB/s
 - Roofline: 8000 GB/s × (1/12) = 667 GFLOPS maximum
-- Actual: ~600 GFLOPS ✅ (near roofline!)
+- Actual: ~600 GFLOPS [OK] (near roofline!)
 
 ---
 
@@ -430,7 +428,7 @@ python3 vectorized_pytorch.py
 
 2. **Coalescing is critical**: Ensure threads in a warp access consecutive addresses. 25x speedup from this alone!
 
-3. **Vectorization gives free 4x**: Use float4 (or float8 on Blackwell) for 4-8x memory throughput.
+3. **Vectorization gives free 4x**: Use float4 (or float8 on NVIDIA GPU) for 4-8x memory throughput.
 
 4. **Shared memory enables reuse**: For algorithms with temporal locality (matmul, convolution), tiling with shared memory is essential.
 
@@ -486,7 +484,7 @@ posix_memalign((void**)&data, 32, size);
 ### Pitfall 4: Shared Memory Overuse
 **Problem**: Using more shared memory reduces occupancy.
 
-**Check**: B200 has 256 KB shared memory per SM. If kernel uses >16 KB shared per block, max occupancy drops below 100%.
+**Check**: NVIDIA GPU has 256 KB shared memory per SM. If kernel uses >16 KB shared per block, max occupancy drops below 100%.
 
 **Solution**: Use less shared memory or increase block size.
 
@@ -524,6 +522,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU, CUDA 13.0, sm_100 architecture
+**Chapter Status**: [OK] Complete
+

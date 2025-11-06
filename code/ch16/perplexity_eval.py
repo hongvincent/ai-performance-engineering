@@ -1,3 +1,11 @@
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+
 """Perplexity evaluation helper for the GPT benchmark model."""
 
 from __future__ import annotations

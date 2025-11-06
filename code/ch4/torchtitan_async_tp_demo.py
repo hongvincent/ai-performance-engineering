@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 TorchTitan Async Tensor Parallelism demo
 ----------------------------------------
@@ -7,7 +17,7 @@ This example shows how to enable the experimental Async Tensor Parallelism
 feature that ships with TorchTitan (https://github.com/pytorch/torchtitan).
 Run it with torchrun on a node with multiple CUDA devices, e.g.:
 
-    torchrun --nproc_per_node=2 ch4/torchtitan_async_tp_demo.py --tp-degree 2
+    torchrun --nproc_per_node=2 extras/ch4/torchtitan_async_tp_demo.py --tp-degree 2
 
 The script:
   * creates a simple MLP and shards it with torch.distributed.tensor.parallel,
@@ -24,14 +34,9 @@ Async-TP currently requires:
 """
 
 from __future__ import annotations
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -43,6 +48,23 @@ except ImportError:
             os.environ.setdefault("MASTER_PORT", "29500")
             os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
 
+try:
+    from gpu_requirements import require_min_gpus, warn_optimal_gpu_count
+except ImportError:
+    def require_min_gpus(min_gpus, script_name=None):
+        import sys as _sys
+        import torch as _torch
+        if _torch.cuda.device_count() < min_gpus:
+            print(
+                f"ERROR: This script requires {min_gpus} GPUs but only "
+                f"{_torch.cuda.device_count()} available",
+                file=_sys.stderr,
+            )
+            _sys.exit(1)
+
+    def warn_optimal_gpu_count(optimal_gpus, script_name=None):
+        pass
+
 
 import argparse
 import os
@@ -51,12 +73,11 @@ import time
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     PrepareModuleInput,
-    Replicate,
     RowwiseParallel,
-    Shard,
     parallelize_module,
 )
 
@@ -160,6 +181,9 @@ def shard_model(model: torch.nn.Module, tp_mesh) -> None:
 
 def main() -> None:
     args = parse_args()
+    warn_optimal_gpu_count(args.tp_degree, "torchtitan_async_tp_demo.py")
+    require_min_gpus(args.tp_degree, "torchtitan_async_tp_demo.py")
+
     local_rank = init_distributed(args.tp_degree)
     device = torch.device("cuda", local_rank)
 

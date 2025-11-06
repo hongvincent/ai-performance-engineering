@@ -8,18 +8,18 @@ This chapter establishes the foundation for all performance optimization work. L
 
 After completing this chapter, you can:
 
-- ✅ Profile Python/PyTorch code to identify performance bottlenecks
-- ✅ Measure goodput (useful compute vs total time) to quantify efficiency
-- ✅ Apply memory management optimizations (pinned memory, preallocated buffers)
-- ✅ Use batched operations to improve GPU utilization
-- ✅ Leverage CUDA Graphs to reduce kernel launch overhead
-- ✅ Understand when and how to apply fundamental optimizations
+- [OK] Profile Python/PyTorch code to identify performance bottlenecks
+- [OK] Measure goodput (useful compute vs total time) to quantify efficiency
+- [OK] Apply memory management optimizations (pinned memory, preallocated buffers)
+- [OK] Use batched operations to improve GPU utilization
+- [OK] Leverage CUDA Graphs to reduce kernel launch overhead
+- [OK] Understand when and how to apply fundamental optimizations
 
 ## Prerequisites
 
 **None** - This is the foundation chapter. Start here!
 
-**Hardware**: NVIDIA GPU (examples optimized for B200 but work on any CUDA-capable GPU)
+**Hardware**: NVIDIA GPU
 
 **Software**: PyTorch 2.x+, CUDA 12.x+
 
@@ -89,7 +89,7 @@ graph.replay()  # Much faster than re-launching
 **Impact**: ~50-70% reduction in launch overhead
 
 #### Optimization 4: Larger Batch Sizes
-**Problem**: Small batches (32) underutilize GPU (87 MFLOPs on B200!).
+**Problem**: Small batches (32) underutilize GPU (low MFLOPs).
 
 **Solution**: Increase batch size to saturate compute:
 ```python
@@ -169,14 +169,14 @@ Speedup:          31.2x
 
 **What it demonstrates**:
 - Calculating arithmetic intensity (FLOP/Byte) for different operations
-- Plotting kernels on the roofline model for B200
+- Plotting kernels on the roofline model for NVIDIA GPUs
 - Identifying whether optimizations should target compute or memory bandwidth
 - Comparing vector operations (memory-bound) vs matrix operations (compute-bound)
 
 **Key concepts**:
 - **Roofline model**: Performance ceiling defined by either compute peak or memory bandwidth
 - **Ridge point**: Arithmetic intensity where compute and bandwidth ceilings intersect
-- **B200 specs**: 2000 TFLOPS peak, 8 TB/s HBM3e bandwidth
+- **Example specs**: Modern NVIDIA GPUs achieve high TFLOPS and memory bandwidth
 - **Optimization strategy**: Memory-bound kernels need better data reuse; compute-bound kernels need better instruction mix
 
 **How to run**:
@@ -201,17 +201,20 @@ Roofline plot saved to roofline_plot.png
 
 ---
 
-### Game hooks (Inference Empire)
+### Chapter profiling
 
-Interactive “Inference Empire” hooks now live under `bootcamp/ch1/game_hooks.py`. Run them from the project root:
+Chapter profiling is handled by `ch1/compare.py`. Run it from the project root:
 
 ```bash
-python3 bootcamp/ch1/game_hooks.py
+python3 -c "from ch1.compare import profile; profile()"
 ```
 
-The chapter benchmarking/profiling scripts also pick up that file automatically, so you’ll still see game-hook results when running `./benchmark_chapter.sh 1 …` or `./profile_chapter.sh 1 …`.
+Or run benchmarks using the unified entry point:
+```bash
+python benchmark.py --chapter 1
+```
 
-**Key insight**: Operations below the ridge point (AI < 250 for B200) are limited by memory bandwidth, not compute!
+**Key insight**: Operations below the ridge point are limited by memory bandwidth, not compute!
 
 ---
 
@@ -281,10 +284,10 @@ nsys-ui ../../results/ch1/performance_basics_pytorch_*.nsys-rep
 ```
 
 **What to look for**:
-- ❌ Long CPU gaps between GPU kernels → Add async operations
-- ❌ Many small kernel launches → Batch or fuse operations
-- ❌ `aten::empty_strided` taking significant time → Preallocate buffers
-- ✅ GPU utilization > 80% → Good!
+- ERROR: Long CPU gaps between GPU kernels → Add async operations
+- ERROR: Many small kernel launches → Batch or fuse operations
+- ERROR: `aten::empty_strided` taking significant time → Preallocate buffers
+- [OK] GPU utilization > 80% → Good!
 
 ### Expected Performance Improvements
 
@@ -296,7 +299,28 @@ nsys-ui ../../results/ch1/performance_basics_pytorch_*.nsys-rep
 | Larger batches | 87 MFLOPs → 1000+ | 10x+ |
 | **Combined** | **Overall end-to-end** | **5-10x** |
 
-*Numbers measured on 8x B200 system. Your results may vary by hardware.*
+*Your results may vary by hardware.*
+
+---
+
+## Baseline/Optimized Example Pairs
+
+All examples follow the `baseline_*.py` / `optimized_*.py` pattern and integrate with the benchmarking framework:
+
+### Available Pairs
+
+1. **Coalescing** (`baseline_coalescing.py` / `optimized_coalescing.py`)
+   - Demonstrates coalesced vs uncoalesced memory access patterns
+   - Shows bandwidth improvements from proper memory access
+
+2. **Double Buffering** (`baseline_double_buffering.py` / `optimized_double_buffering.py`)
+   - Overlaps memory transfer and computation using CUDA streams
+   - Demonstrates latency hiding through async operations
+
+**Run comparisons:**
+```bash
+python3 compare.py  # Compares all baseline/optimized pairs
+```
 
 ---
 
@@ -312,6 +336,9 @@ pip install -r requirements.txt
 python3 performance_basics.py                    # Baseline
 python3 performance_basics_optimized.py          # Optimized comparisons
 python3 roofline_analysis.py                     # Roofline model
+
+# Run baseline/optimized comparisons
+python3 compare.py                               # Compare all pairs
 
 # Build and run CUDA examples
 make
@@ -346,7 +373,7 @@ make
 ### Pitfall 1: Over-batching
 **Problem**: Batch size too large → OOM (out of memory) errors.
 
-**Solution**: Find sweet spot using batch size sweep (shown in `performance_basics_optimized.py`). Typical range: 64-512 for B200.
+**Solution**: Find sweet spot using batch size sweep (shown in `performance_basics_optimized.py`). Typical range: 64-512 for modern NVIDIA GPUs.
 
 ### Pitfall 2: CUDA Graphs with Dynamic Shapes
 **Problem**: CUDA Graphs require static shapes. Dynamic models will fail or show no speedup.
@@ -374,12 +401,12 @@ elapsed = time.time() - start
 
 ## Next Steps
 
-**Ready for more?** → [Chapter 2: B200 Hardware](../ch2/README.md)
+**Ready for more?** → [Chapter 2: GPU Hardware Architecture](../ch2/README.md)
 
 Learn about:
-- B200/GB200 hardware architecture
-- HBM3e memory hierarchy
-- NVLink and Chip-to-Chip (C2C) bandwidth
+- NVIDIA GPU hardware architecture
+- Memory hierarchy
+- NVLink and interconnects
 - How hardware architecture informs optimization strategy
 
 **Want to dive deeper into profiling?** → [Chapter 13: PyTorch Profiling](../ch13/README.md)
@@ -394,6 +421,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9, CUDA 13.0
+**Chapter Status**: [OK] Complete
+

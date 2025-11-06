@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 """
 Chapter 10: Real cuFile (GPUDirect Storage) Example
 ====================================================
@@ -21,7 +31,6 @@ Hardware: NVIDIA B200/B300 (SM 10.0) with NVMe SSD and GDS support
 """
 
 import os
-import sys
 import time
 import tempfile
 import numpy as np
@@ -33,7 +42,7 @@ try:
     from cuda import cuda as cuda_driver
     from cuda.bindings import cufile
     CUFILE_AVAILABLE = True
-    print("✓ cuFile bindings available (cuda-bindings 13.0+)")
+    print("cuFile bindings available (cuda-bindings 13.0+)")
 except ImportError as e:
     CUFILE_AVAILABLE = False
     cuda_driver = None
@@ -45,7 +54,7 @@ try:
     import torch
     TORCH_AVAILABLE = torch.cuda.is_available()
     if TORCH_AVAILABLE:
-        print(f"✓ PyTorch GPU available: {torch.cuda.get_device_name(0)}")
+        print(f"PyTorch GPU available: {torch.cuda.get_device_name(0)}")
 except ImportError:
     TORCH_AVAILABLE = False
     torch = None
@@ -92,7 +101,7 @@ class GPUDirectStorageDemo:
                 raise CuFileError(f"cuFileDriverOpen failed: {status}")
             
             self.driver_initialized = True
-            print("✓ cuFile driver initialized")
+            print("cuFile driver initialized")
             
         except Exception as e:
             raise CuFileError(f"Failed to initialize cuFile driver: {e}")
@@ -146,7 +155,7 @@ class GPUDirectStorageDemo:
         with os.fdopen(fd, 'wb') as f:
             f.write(data.tobytes())
         
-        print(f"✓ Created test file: {filepath} ({size_mb} MB)")
+        print(f"Created test file: {filepath} ({size_mb} MB)")
         return filepath
     
     def read_traditional(self, filepath: str, device: int = 0) -> Tuple[float, float]:
@@ -438,7 +447,7 @@ class GPUDirectStorageDemo:
         if self.driver_initialized:
             try:
                 cufile.cuFileDriverClose()
-                print("✓ cuFile driver closed")
+                print("cuFile driver closed")
             except:
                 pass
 
@@ -482,10 +491,10 @@ def simulate_gds_performance():
     print(f"  CPU cycles saved: ~30-40%")
     
     print("\nKey Benefits:")
-    print("  ✓ Eliminates CPU memory copy")
-    print("  ✓ Reduces system memory bandwidth pressure")
-    print("  ✓ Frees CPU for other work")
-    print("  ✓ Lower latency for storage-bound workloads")
+    print("  Eliminates CPU memory copy")
+    print("  Reduces system memory bandwidth pressure")
+    print("  Frees CPU for other work")
+    print("  Lower latency for storage-bound workloads")
     
     print(f"\n{'='*60}\n")
 
@@ -510,7 +519,7 @@ def main():
     
     # Run demonstration
     if CUFILE_AVAILABLE and TORCH_AVAILABLE:
-        print("\n✓ All dependencies available")
+        print("\nAll dependencies available")
         
         demo = GPUDirectStorageDemo(use_gds=True)
         

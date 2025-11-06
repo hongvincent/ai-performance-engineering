@@ -8,12 +8,12 @@ CUDA streams enable concurrent execution of independent operations, dramatically
 
 After completing this chapter, you can:
 
-- ✅ Create and manage CUDA streams for concurrent execution
-- ✅ Overlap kernel execution, H2D, and D2H transfers
-- ✅ Use stream-ordered allocators for zero-copy patterns
-- ✅ Implement multi-stream pipelines for maximum throughput
-- ✅ Measure and optimize stream concurrency
-- ✅ Avoid common stream pitfalls (false dependencies, synchronization issues)
+- [OK] Create and manage CUDA streams for concurrent execution
+- [OK] Overlap kernel execution, H2D, and D2H transfers
+- [OK] Use stream-ordered allocators for zero-copy patterns
+- [OK] Implement multi-stream pipelines for maximum throughput
+- [OK] Measure and optimize stream concurrency
+- [OK] Avoid common stream pitfalls (false dependencies, synchronization issues)
 
 ## Prerequisites
 
@@ -114,7 +114,7 @@ make basic_streams
 ```
 Without streams: 42.3 ms
 With 4 streams: 21.7 ms
-Speedup: 1.95x ✅
+Speedup: 1.95x [OK]
 ```
 
 ---
@@ -144,10 +144,10 @@ cudaFreeAsync(ptr, stream);
 ```
 
 **Benefits**:
-- ✅ No device-wide synchronization
-- ✅ Deferred frees (safe even if kernels still running)
-- ✅ Memory pool reuse (faster allocations)
-- ✅ Better concurrency
+- [OK] No device-wide synchronization
+- [OK] Deferred frees (safe even if kernels still running)
+- [OK] Memory pool reuse (faster allocations)
+- [OK] Better concurrency
 
 **Example**:
 
@@ -222,6 +222,26 @@ make warp_specialized_pipeline_multistream
 ./warp_specialized_pipeline_multistream_sm100
 ```
 
+**CLI parameters**:
+
+`warp_specialized_pipeline_multistream_sm100` now accepts runtime flags so you can sweep pipeline pressure without editing source:
+
+```bash
+./warp_specialized_pipeline_multistream_sm100 \
+  --streams 4 \
+  --batches 12 \
+  --batch-elems 131072 \
+  --release-threshold-gib 1.5
+```
+
+- `--streams <int>`: number of CUDA streams/buffers to rotate (default 3)
+- `--batches <int>`: mini-batches to process (default 9)
+- `--batch-elems <int>`: elements per batch (default 65,536)
+- `--release-threshold-gib <float>`: stream-ordered allocator release threshold in GiB (default 2.0)
+- `--skip-verify`: skip host-side correctness check for faster experimentation
+
+Use `--help` to see the full flag list.
+
 ---
 
 ### 4. `warp_specialized_two_pipelines_multistream.cu` - Advanced Multi-Pipeline
@@ -285,7 +305,7 @@ for (int i = 0; i < N; i++) {
 
 ### Pattern 2: Hyper-Q Exploitation
 
-**B200 has 128 hardware queues**: Can truly execute 128 independent operations!
+**NVIDIA GPU has 128 hardware queues**: Can truly execute 128 independent operations!
 
 ```cpp
 const int NUM_STREAMS = 32;  // Exploit Hyper-Q
@@ -334,9 +354,9 @@ nsys-ui ../../results/ch11/basic_streams_*.nsys-rep
 ```
 
 **Look for**:
-- ✅ Overlapping kernel execution rows (concurrent streams)
-- ✅ H2D during kernel execution (overlap)
-- ❌ Gaps between operations (missed opportunities)
+- [OK] Overlapping kernel execution rows (concurrent streams)
+- [OK] H2D during kernel execution (overlap)
+- ERROR: Gaps between operations (missed opportunities)
 
 ### Stream Efficiency Metrics
 
@@ -344,9 +364,9 @@ nsys-ui ../../results/ch11/basic_streams_*.nsys-rep
 |---------------|------------|-------------------|
 | No streams | 1.0x | 0% (serial) |
 | 2 streams | 1.6x | 60% |
-| 4 streams | 2.3x | 77% ✅ |
-| 8 streams | 2.7x | 84% ✅ |
-| 16 streams | 2.9x | 86% ✅ |
+| 4 streams | 2.3x | 77% [OK] |
+| 8 streams | 2.7x | 84% [OK] |
+| 16 streams | 2.9x | 86% [OK] |
 
 **Diminishing returns**: Beyond 8 streams, little benefit (overhead increases).
 
@@ -363,7 +383,7 @@ make
 # Run stream examples
 ./basic_streams_sm100                                      # Stream basics
 ./stream_ordered_allocator_sm100                           # Async allocation
-./warp_specialized_pipeline_multistream_sm100              # Single pipeline
+./warp_specialized_pipeline_multistream_sm100              # Single pipeline (add flags, e.g. --streams 4)
 ./warp_specialized_two_pipelines_multistream_sm100         # Dual pipelines
 
 # Profile to see concurrency
@@ -383,7 +403,7 @@ nsys-ui ../../results/ch11/basic_streams_*.nsys-rep
 
 3. **Breadth-first scheduling maximizes overlap**: Issue all operations before waiting for any.
 
-4. **Hyper-Q enables massive parallelism**: B200 has 128 hardware queues. Use 8-32 streams for best utilization.
+4. **Hyper-Q enables massive parallelism**: NVIDIA GPU has 128 hardware queues. Use 8-32 streams for best utilization.
 
 5. **Priority streams for latency**: High-priority streams preempt low-priority → Better latency for critical work.
 
@@ -483,7 +503,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU, CUDA 13.0, 128 Hyper-Q hardware queues
+**Chapter Status**: [OK] Complete
 

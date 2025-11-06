@@ -2,23 +2,23 @@
 
 ## Overview
 
-Even the best code can underperform on a misconfigured system. This chapter covers system-level tuning for B200/GB200 systems, including NUMA binding, CPU affinity, kernel parameters, and containerization best practices. These optimizations ensure your hardware operates at peak efficiency.
+Even the best code can underperform on a misconfigured system. This chapter covers system-level tuning for NVIDIA GPU systems, including NUMA binding, CPU affinity, kernel parameters, and containerization best practices. These optimizations ensure your hardware operates at peak efficiency.
 
 ## Learning Objectives
 
 After completing this chapter, you can:
 
-- ✅ Configure NUMA (Non-Uniform Memory Access) binding for optimal CPU-GPU affinity
-- ✅ Apply system-level tuning for GPU workloads
-- ✅ Configure Docker and Kubernetes for GPU-accelerated containers
-- ✅ Measure and validate system configuration impact on performance
-- ✅ Troubleshoot common system-level bottlenecks
+- [OK] Configure NUMA (Non-Uniform Memory Access) binding for optimal CPU-GPU affinity
+- [OK] Apply system-level tuning for GPU workloads
+- [OK] Configure Docker and Kubernetes for GPU-accelerated containers
+- [OK] Measure and validate system configuration impact on performance
+- [OK] Troubleshoot common system-level bottlenecks
 
 ## Prerequisites
 
 **Previous chapters**: 
 - [Chapter 1: Performance Basics](../ch1/README.md) - profiling methodology
-- [Chapter 2: B200 Hardware](../ch2/README.md) - hardware topology understanding
+- [Chapter 2: NVIDIA GPU Hardware](../ch2/README.md) - hardware topology understanding
 
 **Required knowledge**: Basic Linux system administration
 
@@ -108,17 +108,17 @@ sudo ./system_tuning.sh
 
 ---
 
-### 3. `cpu_gpu_numa_optimizations.sh` - Grace-Blackwell Specific
+### 3. `cpu_gpu_numa_optimizations.sh` - CPU-GPU Specific
 
-**Purpose**: Additional tuning for GB200 systems with Grace CPU.
+**Purpose**: Additional tuning for NVIDIA GPU systems with Grace CPU.
 
 **What it adds**:
 - ARM-specific CPU governor settings
-- Grace-Blackwell C2C link optimization
+- CPU-GPU C2C link optimization
 - Coherent memory pool configuration
 - ARM PMU (Performance Monitoring Unit) setup
 
-**How to run** (GB200 only):
+**How to run** (NVIDIA GPU only):
 ```bash
 sudo ./cpu_gpu_numa_optimizations.sh
 ```
@@ -135,7 +135,7 @@ sudo ./cpu_gpu_numa_optimizations.sh
 # Use NVIDIA base image with CUDA 13 + PyTorch 2.9
 FROM nvcr.io/nvidia/pytorch:25.09-py3
 
-# Set allocator + arch flags for Blackwell (sm_100 + PTX fallback)
+# Set allocator + arch flags for NVIDIA GPU (modern compute capability + PTX fallback)
 ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 ENV TORCH_CUDA_ARCH_LIST="10.0+PTX"
 ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
@@ -190,7 +190,7 @@ spec:
       medium: Memory
       sizeLimit: 64Gi  # Large SHM for multi-GPU
   nodeSelector:
-    nvidia.com/gpu.product: NVIDIA-B200  # Target B200 nodes
+    nvidia.com/gpu.product: NVIDIA-NVIDIA GPU  # Target NVIDIA GPU nodes
   affinity:
     podAntiAffinity:  # Don't co-locate pods
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -269,11 +269,11 @@ cd ch3
 python3 bind_numa_affinity.py --validate
 
 # Expected output:
-# ✅ CPU governor: performance
-# ✅ THP enabled
-# ✅ NUMA binding correct
-# ✅ PCIe Gen5 active
-# ✅ GPU clocks at maximum
+# [OK] CPU governor: performance
+# [OK] THP enabled
+# [OK] NUMA binding correct
+# [OK] PCIe Gen5 active
+# [OK] GPU clocks at maximum
 ```
 
 ---
@@ -333,7 +333,7 @@ sudo ./system_tuning.sh
 # 4. Test NUMA binding
 python3 bind_numa_affinity.py --gpu 0 --validate
 
-# 5. GB200 only: Apply Grace-specific tuning
+# 5. NVIDIA GPU only: Apply Grace-specific tuning
 sudo ./cpu_gpu_numa_optimizations.sh
 
 # 6. Container examples
@@ -424,6 +424,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, Ubuntu 22.04, Linux 6.11
+**Chapter Status**: [OK] Complete
+

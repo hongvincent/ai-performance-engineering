@@ -1,392 +1,263 @@
 #!/usr/bin/env python3
-"""
-Native FP8 Training with PyTorch 2.9
+"""Transformer Engine FP8 training demo for Chapter 19.
 
-Demonstrates native FP8 training using torch.float8_e4m3fn and torch.float8_e5m2
-types that work with Blackwell's Tensor Cores. Requires PyTorch 2.9+ and CUDA 13.0+.
+Highlights current (Oct 2025) best practices on NVIDIA Blackwell with
+CUDA 13 + PyTorch 2.9:
+  * Prefer BF16 when using AMP; rely on Transformer Engine (TE) for MXFP8/NVFP4 paths.
+  * Switch to cudaMallocAsync allocator without respawning when possible.
+  * Pair FP8 paths with torch.compile(mode="reduce-overhead") for steady decode shapes.
 """
 
 from __future__ import annotations
-import sys
+
+import contextlib
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
-
-
-from collections import deque
+import sys
+import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.amp import autocast
-import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 
 try:
-    import torch._dynamo as _dynamo
-except (ImportError, AttributeError):  # pragma: no cover - older PyTorch
-    _dynamo = None
+    from transformer_engine.pytorch import Linear as TELinear
+    from transformer_engine.pytorch import LayerNorm as TELayerNorm
+    from transformer_engine.pytorch import fp8_autocast
 
-# Check FP8 availability
-try:
-    FP8_E4M3 = torch.float8_e4m3fn
-    FP8_E5M2 = torch.float8_e5m2
-    FP8_AVAILABLE = True
-except AttributeError:
-    FP8_AVAILABLE = False
-    print("WARNING: FP8 types not available. Requires PyTorch 2.9+")
+    _TE_AVAILABLE = True
+except Exception:  # pragma: no cover - allow CPU/dev boxes without TE
+    _TE_AVAILABLE = False
+
+    class _NullCtx(contextlib.ContextDecorator):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fp8_autocast(**_: object) -> contextlib.AbstractContextManager[None]:
+        return _NullCtx()
+
+    class TELinear(nn.Linear):  # type: ignore[misc]
+        """Fallback shim so code paths remain import-safe."""
+
+    class TELayerNorm(nn.LayerNorm):  # type: ignore[misc]
+        """Fallback shim matching TE interface."""
+
+
+def _amp_dtype(prefer_bfloat16: bool) -> torch.dtype:
+    return torch.bfloat16 if prefer_bfloat16 else torch.float16
+
+
+class FP8MLP(nn.Module):
+    """Stacked MLP with optional FP8 (Transformer Engine) linear layers."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        num_layers: int = 4,
+        *,
+        use_fp8: bool = True,
+    ) -> None:
+        super().__init__()
+        self.use_fp8 = bool(use_fp8 and _TE_AVAILABLE)
+
+        def _linear(in_features: int, out_features: int) -> nn.Module:
+            if self.use_fp8:
+                return TELinear(in_features, out_features, bias=True)
+            return nn.Linear(in_features, out_features, bias=True)
+
+        layers: Iterable[nn.Module] = []
+        layers = [
+            _linear(input_dim, hidden_dim),
+            TELayerNorm(hidden_dim) if self.use_fp8 else nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+        ]
+        for _ in range(num_layers - 2):
+            layers.extend(
+                [
+                    _linear(hidden_dim, hidden_dim),
+                    TELayerNorm(hidden_dim) if self.use_fp8 else nn.LayerNorm(hidden_dim),
+                    nn.GELU(),
+                ]
+            )
+        layers.append(_linear(hidden_dim, output_dim))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_fp8:
+            # Transformer Engine exposes MXFP8 kernels when fp8_autocast is enabled.
+            with fp8_autocast(enabled=True):
+                return self.net(x)
+        return self.net(x)
 
 
 @dataclass
-class FP8Config:
-    """Configuration for FP8 training."""
-    enabled: bool = True
-    use_e4m3_forward: bool = True  # E4M3 for forward (better for matmul)
-    use_e5m2_backward: bool = True  # E5M2 for backward (better range)
-    amax_history_len: int = 1024  # History for scaling
-    amax_compute_algo: str = "max"  # max or most_recent
+class BenchmarkResult:
+    time_ms: float
+    memory_mb: float
+    loss: float
 
 
-class FP8ScalingManager:
-    """Manages FP8 scaling factors for numerically stable training."""
-    
-    def __init__(self, config: FP8Config):
-        self.config = config
-        self.amax_history = deque(maxlen=config.amax_history_len)
-        self.scale = torch.tensor(1.0, dtype=torch.float32)
-        
-    def update_scale(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Update scaling factor based on tensor statistics."""
-        if not self.config.enabled or not FP8_AVAILABLE:
-            return self.scale.to(tensor.device)
-        
-        fp8_max = 448.0  # E4M3 max
-        device = tensor.device
-        amax = tensor.detach().abs().amax()
-        scale = amax / (fp8_max * 0.8)
-        
-        if _dynamo is not None and _dynamo.is_compiling():  # pragma: no branch - tracing guard
-            scale = torch.clamp(scale.to(torch.float32), min=1e-6)
-            self.scale = scale
-            return self.scale
-        
-        amax_val = float(amax)
-        self.amax_history.append(amax_val)
-        if self.config.amax_compute_algo == "max":
-            tracked = max(self.amax_history) if self.amax_history else amax_val
-        else:
-            tracked = self.amax_history[-1] if self.amax_history else amax_val
-        
-        scale_val = max(tracked / (fp8_max * 0.8), 1e-6)
-        self.scale = torch.tensor(scale_val, dtype=torch.float32, device=device)
-        return self.scale
-    
-    def quantize_fp8(self, tensor: torch.Tensor, use_e4m3: bool = True) -> torch.Tensor:
-        """Quantize tensor to FP8 with scaling."""
-        if not self.config.enabled or not FP8_AVAILABLE:
-            return tensor
-        
-        dtype = FP8_E4M3 if use_e4m3 else FP8_E5M2
-        
-        # Update scale based on current tensor
-        scale = self.update_scale(tensor).to(tensor.device)
-        
-        # Scale and quantize
-        scaled = tensor / scale
-        quantized = scaled.to(dtype)
-        
-        return quantized, scale
-    
-    def dequantize_fp8(self, tensor: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-        """Dequantize FP8 tensor back to FP32."""
-        return tensor.to(torch.float32) * scale
+def _training_step(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    inputs: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    amp_dtype: Optional[torch.dtype] = None,
+) -> float:
+    autocast_ctx = (
+        torch.autocast(device_type="cuda", dtype=amp_dtype) if amp_dtype is not None else contextlib.nullcontext()
+    )
+    with autocast_ctx:
+        output = model(inputs)
+        loss = F.mse_loss(output, target)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    return float(loss.detach())
 
 
-class FP8Linear(nn.Module):
-    """Linear layer with FP8 forward pass."""
-    
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, config: Optional[FP8Config] = None):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.config = config or FP8Config()
-        
-        # Parameters stored in FP32/BF16
-        self.weight = nn.Parameter(torch.randn(out_features, in_features))
-        if bias:
-            self.bias = nn.Parameter(torch.zeros(out_features))
-        else:
-            self.register_parameter('bias', None)
-        
-        self.scaling_manager = FP8ScalingManager(self.config)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass with FP8 computation using Blackwell hardware."""
-        if not self.config.enabled or not FP8_AVAILABLE:
-            return F.linear(x, self.weight, self.bias)
-        
-        # Quantize inputs and weights to FP8
-        x_fp8, x_scale = self.scaling_manager.quantize_fp8(x, use_e4m3=True)
-        w_fp8, w_scale = self.scaling_manager.quantize_fp8(self.weight, use_e4m3=True)
-        
-        # Use torch._scaled_mm for inference-only paths (no grad required)
-        use_scaled_mm = hasattr(torch, '_scaled_mm') and not torch.is_grad_enabled()
-        
-        if use_scaled_mm:
-            # Native FP8 matrix multiplication on Blackwell
-            # Reshape for matmul: x_fp8 [..., in_features] @ w_fp8.T [out_features, in_features]
-            x_shape = x_fp8.shape
-            x_2d = x_fp8.reshape(-1, x_fp8.shape[-1])
-            
-            try:
-                # _scaled_mm performs: (x_fp8 @ w_fp8.T) * scale
-                result = torch._scaled_mm(
-                    x_2d, w_fp8.t(),
-                    scale_a=x_scale, scale_b=w_scale,
-                    out_dtype=x.dtype
-                )
-                if isinstance(result, tuple):
-                    output_fp = result[0]
-                else:
-                    output_fp = result
-                output = output_fp.reshape(*x_shape[:-1], -1)
-            except Exception:
-                use_scaled_mm = False
-        
-        if not use_scaled_mm:
-            # Fallback: manual FP8 emulation
-            x_compute = x_fp8.to(x.dtype) * x_scale
-            w_compute = w_fp8.to(x.dtype) * w_scale
-            output = F.linear(x_compute, w_compute, None)
-        
-        if self.bias is not None:
-            output = output + self.bias
-        
-        return output
-
-
-class SimpleMLPModel(nn.Module):
-    """Simple MLP for benchmarking FP8 training."""
-    
-    def __init__(self, input_dim: int = 2048, hidden_dim: int = 8192, output_dim: int = 2048, num_layers: int = 4, use_fp8: bool = True):
-        super().__init__()
-        self.use_fp8 = use_fp8
-        config = FP8Config(enabled=use_fp8)
-        
-        layers = []
-        layers.append(FP8Linear(input_dim, hidden_dim, config=config) if use_fp8 else nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.GELU())
-        
-        for _ in range(num_layers - 2):
-            layers.append(FP8Linear(hidden_dim, hidden_dim, config=config) if use_fp8 else nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.GELU())
-        
-        layers.append(FP8Linear(hidden_dim, output_dim, config=config) if use_fp8 else nn.Linear(hidden_dim, output_dim))
-        
-        self.model = nn.Sequential(*layers)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)
-
-
-def benchmark_fp8_training() -> None:
-    """Benchmark FP8 vs BF16/FP16 training."""
+def benchmark_fp8_training() -> Dict[str, BenchmarkResult]:
     if not torch.cuda.is_available():
-        print("CUDA not available. Skipping FP8 benchmark.")
-        return
-    
-    device = "cuda"
+        raise RuntimeError("CUDA device required for FP8 benchmark.")
+
+    device = torch.device("cuda")
     batch_size = 32
     seq_len = 512
     input_dim = 2048
-    
-    print("=" * 80)
-    print("Native FP8 Training Benchmark (PyTorch 2.9)")
-    print("=" * 80)
-    print(f"Configuration: batch={batch_size}, seq={seq_len}, dim={input_dim}")
-    print()
-    
-    # Test configurations
-    configs = [
+    hidden_dim = 8192
+
+    configs: Tuple[Tuple[str, bool, Optional[torch.dtype]], ...] = (
         ("BF16", False, torch.bfloat16),
         ("FP16", False, torch.float16),
-    ]
-    
-    if FP8_AVAILABLE:
-        configs.append(("FP8", True, None))  # FP8 uses FP32 base
-    
-    results = {}
-    
-    for name, use_fp8, dtype in configs:
-        print(f"Testing {name}...")
-        
-        # Create model
-        model = SimpleMLPModel(input_dim=input_dim, use_fp8=use_fp8).to(device)
-        if dtype is not None:
-            model = model.to(dtype)
-        
-        # Optimizer (fused Adam for best performance)
+        ("FP8", True, None),
+    )
+
+    results: Dict[str, BenchmarkResult] = {}
+
+    for name, use_fp8, amp_dtype in configs:
+        if use_fp8 and not _TE_AVAILABLE:
+            print(f"[skip] Transformer Engine not available; skipping {name} benchmark.")
+            continue
+
+        model = FP8MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            output_dim=input_dim,
+            num_layers=4,
+            use_fp8=use_fp8,
+        ).to(device)
+
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, fused=True)
-        
-        # Dummy data
-        input_data = torch.randn(batch_size, seq_len, input_dim, device=device)
-        target = torch.randn(batch_size, seq_len, input_dim, device=device)
-        
-        if dtype is not None:
-            input_data = input_data.to(dtype)
-            target = target.to(dtype)
-        
+
+        inputs = torch.randn(batch_size, seq_len, input_dim, device=device)
+        targets = torch.randn(batch_size, seq_len, input_dim, device=device)
+        if amp_dtype is not None:
+            inputs = inputs.to(amp_dtype)
+            targets = targets.to(amp_dtype)
+
         # Warmup
         for _ in range(5):
-            optimizer.zero_grad(set_to_none=True)
-            output = model(input_data)
-            loss = F.mse_loss(output, target)
-            loss.backward()
-            optimizer.step()
-        
+            loss_val = _training_step(
+                model,
+                optimizer,
+                inputs,
+                targets,
+                amp_dtype=amp_dtype if not use_fp8 else None,
+            )
+
         torch.cuda.synchronize()
-        
-        # Benchmark
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
-        
+
         start.record()
         for _ in range(20):
-            optimizer.zero_grad(set_to_none=True)
-            output = model(input_data)
-            loss = F.mse_loss(output, target)
-            loss.backward()
-            optimizer.step()
+            loss_val = _training_step(
+                model,
+                optimizer,
+                inputs,
+                targets,
+                amp_dtype=amp_dtype if not use_fp8 else None,
+            )
         end.record()
-        end.synchronize()
-        
-        time_ms = start.elapsed_time(end) / 20
-        
-        # Memory usage
-        memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
-        
-        results[name] = {
-            "time_ms": time_ms,
-            "memory_mb": memory_mb,
-            "loss": loss.item(),
-        }
-        
-        print(f"  Time: {time_ms:.2f} ms/iter")
-        print(f"  Memory: {memory_mb:.1f} MB")
-        print(f"  Loss: {loss.item():.6f}")
-        print()
-        
-        # Clean up
-        del model, optimizer, input_data, target
+        torch.cuda.synchronize()
+
+        time_ms = start.elapsed_time(end) / 20.0
+        memory_mb = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
+
+        results[name] = BenchmarkResult(time_ms=time_ms, memory_mb=memory_mb, loss=loss_val)
+        print(f"{name:<4}  time={time_ms:6.2f} ms | memory={memory_mb:7.1f} MB | loss={loss_val:.5f}")
+
+        del model, optimizer, inputs, targets
         torch.cuda.empty_cache()
-    
-    # Print comparison
-    print("=" * 80)
-    print("Comparison")
-    print("=" * 80)
-    
-    if "FP8" in results and "BF16" in results:
-        speedup = results["BF16"]["time_ms"] / results["FP8"]["time_ms"]
-        memory_savings = (results["BF16"]["memory_mb"] - results["FP8"]["memory_mb"]) / results["BF16"]["memory_mb"] * 100
-        
-        print(f"FP8 vs BF16:")
-        print(f"  Speedup: {speedup:.2f}x")
-        print(f"  Memory savings: {memory_savings:.1f}%")
-        print()
-    
-    if "FP8" in results and "FP16" in results:
-        speedup = results["FP16"]["time_ms"] / results["FP8"]["time_ms"]
-        print(f"FP8 vs FP16:")
-        print(f"  Speedup: {speedup:.2f}x")
-        print()
-    
-    print("Key Takeaways:")
-    print("- FP8 provides 1.4-1.6x speedup on Blackwell B200")
-    print("- Memory usage reduced by ~2x")
-    print("- Native PyTorch 2.9 implementation (no external deps)")
-    print("- Numerical accuracy within acceptable bounds")
-    print("=" * 80)
+
+    return results
 
 
-def demonstrate_fp8_compiled() -> None:
-    """Demonstrate FP8 with torch.compile for maximum performance."""
-    if not torch.cuda.is_available() or not FP8_AVAILABLE:
-        print("Skipping compiled FP8 demo (requires CUDA + PyTorch 2.9)")
+def demonstrate_fp8_compile() -> None:
+    if not torch.cuda.is_available() or not _TE_AVAILABLE:
+        print("[skip] FP8 compile demo requires CUDA device and Transformer Engine.")
         return
-    
-    print("\n" + "=" * 80)
-    print("FP8 + torch.compile (Maximum Performance)")
-    print("=" * 80)
-    
-    device = "cuda"
-    model = SimpleMLPModel(use_fp8=True).to(device)
-    
-    # Compile with max-autotune
-    compiled_model = torch.compile(model, mode="max-autotune")
-    
-    # Benchmark
-    input_data = torch.randn(32, 512, 2048, device=device)
-    
-    # Warmup
-    for _ in range(5):
-        _ = compiled_model(input_data)
-    
+
+    device = torch.device("cuda")
+    model = FP8MLP(2048, 8192, 2048, num_layers=4, use_fp8=True).to(device)
+    try:
+        compiled = torch.compile(model, **TORCH_COMPILE_KW)
+    except Exception as exc:  # pragma: no cover - torch.compile availability varies
+        print(f"[skip] torch.compile could not optimize FP8 model: {exc}")
+        return
+
+    sample = torch.randn(32, 512, 2048, device=device)
+    try:
+        for _ in range(4):
+            compiled(sample)
+    except Exception as exc:
+        print(f"[skip] FP8 compiled warmup failed: {exc}")
+        return
+
     torch.cuda.synchronize()
-    
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
-    
     start.record()
-    for _ in range(20):
-        output = compiled_model(input_data)
+    try:
+        for _ in range(20):
+            compiled(sample)
+    except Exception as exc:
+        print(f"[skip] FP8 compiled benchmark failed: {exc}")
+        return
     end.record()
-    end.synchronize()
-    
-    time_ms = start.elapsed_time(end) / 20
-    
-    print(f"FP8 + torch.compile: {time_ms:.2f} ms/iter")
-    print("Combines:")
-    print("  - Native FP8 for 1.5x speedup")
-    print("  - torch.compile for kernel fusion")
-    print("  - CUDA graph trees for reduced overhead")
-    print("Expected: ~2x overall speedup on Blackwell")
-    print("=" * 80)
+    torch.cuda.synchronize()
+    print(f"FP8 + torch.compile throughput: {start.elapsed_time(end)/20.0:6.2f} ms/iter")
 
 
 def main() -> None:
-    """Run all FP8 training examples."""
-    if not FP8_AVAILABLE:
-        print("\n" + "!" * 80)
-        print("FP8 types not available in your PyTorch installation.")
-        print("This feature requires PyTorch 2.9 or later.")
-        print("\nTo install PyTorch 2.9:")
-        print("  pip install torch==2.9.0+cu130 --index-url https://download.pytorch.org/whl/cu130")
-        print("!" * 80)
+    print("=" * 80)
+    print("Chapter 19 — Transformer Engine FP8 Benchmark")
+    print("=" * 80)
+    try:
+        results = benchmark_fp8_training()
+    except RuntimeError as exc:
+        print(f"[error] {exc}")
         return
-    
-    # Run benchmarks
-    benchmark_fp8_training()
-    demonstrate_fp8_compiled()
-    
-    print("\n" + "=" * 80)
-    print("Summary: Native FP8 Training")
-    print("=" * 80)
-    print("PyTorch 2.9 native FP8 provides:")
-    print(" 1.4-1.6x speedup on Blackwell B200")
-    print(" 2x memory savings")
-    print(" No external dependencies (Transformer Engine not needed)")
-    print(" Direct integration with torch.compile")
-    print(" Automatic scaling management")
-    print("\nUse for:")
-    print("- Large model training (>1B parameters)")
-    print("- Memory-constrained scenarios")
-    print("- Maximum throughput inference")
-    print("=" * 80)
+
+    if "FP8" in results and "BF16" in results:
+        bf16 = results["BF16"]
+        fp8 = results["FP8"]
+        print("\nComparisons vs BF16:")
+        print(f"  Throughput speedup: {bf16.time_ms / fp8.time_ms:5.2f}×")
+        print(f"  Memory savings:     {(bf16.memory_mb - fp8.memory_mb) / bf16.memory_mb * 100.0:5.1f}%")
+
+    demonstrate_fp8_compile()
 
 
 if __name__ == "__main__":

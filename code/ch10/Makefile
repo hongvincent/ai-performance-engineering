@@ -1,68 +1,151 @@
-# Makefile for double_buffered_pipeline.cu
+# Chapter 10 Makefile - Memory Pipelines and GPUDirect Storage with architecture-aware builds
 
-# Detect CUDA architecture
-CUDA_ARCH ?= native
+include ../common/cuda_arch.mk
 
-# Compiler settings
-NVCC = nvcc
-CXXFLAGS = -std=c++17 -O3
-NVCCFLAGS = -arch=$(CUDA_ARCH) -lineinfo --expt-relaxed-constexpr
+NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) -lineinfo -Xptxas=-v
+SUFFIX = $(TARGET_SUFFIX)
 
 # Include path for common headers
 INCLUDES = -I..
-
-# Common headers
 COMMON_HEADERS = ../common/headers/arch_detection.cuh ../common/headers/tma_helpers.cuh
 
-# Target executable
-TARGET = double_buffered_pipeline
-SOURCE = double_buffered_pipeline.cu
+# Explicit list of CUDA examples
+BASE_TARGETS = baseline_cluster_group optimized_cluster_group \
+               baseline_cooperative_persistent optimized_cooperative_persistent \
+               baseline_double_buffered_pipeline optimized_double_buffered_pipeline
 
-.PHONY: all clean run test test-gds demo help
+TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
-all: $(TARGET)
+.PHONY: all clean test compare blackwell grace-blackwell profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS) run test-gds demo help
 
-$(TARGET): $(SOURCE) $(COMMON_HEADERS)
-	$(NVCC) $(NVCCFLAGS) $(CXXFLAGS) $(INCLUDES) -o $(TARGET) $(SOURCE)
+all: $(TARGETS)
+	@echo "Building all Chapter 10 examples with $(ARCH) (CUDA $(CUDA_VERSION))"
+	@echo "✓ Targeting $(ARCH_NAME)"
+	@echo "✓ Built $(words $(BASE_TARGETS)) CUDA examples"
 
-run: $(TARGET)
-	./$(TARGET)
+# Explicit build rules for each example
+baseline_cluster_group$(SUFFIX): baseline_cluster_group.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
 
-test: $(TARGET)
+optimized_cluster_group$(SUFFIX): optimized_cluster_group.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+baseline_cooperative_persistent$(SUFFIX): baseline_cooperative_persistent.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+optimized_cooperative_persistent$(SUFFIX): optimized_cooperative_persistent.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+baseline_double_buffered_pipeline$(SUFFIX): baseline_double_buffered_pipeline.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+optimized_double_buffered_pipeline$(SUFFIX): optimized_double_buffered_pipeline.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+# Legacy target name for double_buffered_pipeline (without suffix)
+double_buffered_pipeline: baseline_double_buffered_pipeline$(SUFFIX)
+	cp baseline_double_buffered_pipeline$(SUFFIX) double_buffered_pipeline
+
+run: double_buffered_pipeline
+	./double_buffered_pipeline
+
+test: all
 	@echo "=== Testing Memory Pipeline (CUDA) ==="
 	@echo "=== Testing small matrix (16x16x16) ==="
-	./$(TARGET) 16 16 16
+	./baseline_double_buffered_pipeline$(SUFFIX) 16 16 16 || true
 	@echo ""
 	@echo "=== Testing medium matrix (128x128x128) ==="
-	./$(TARGET) 128 128 128
+	./baseline_double_buffered_pipeline$(SUFFIX) 128 128 128 || true
 	@echo ""
 	@echo "=== Testing large matrix (1024x1024x1024) ==="
-	./$(TARGET) 1024 1024 1024
+	./baseline_double_buffered_pipeline$(SUFFIX) 1024 1024 1024 || true
 
 test-gds:
 	@echo "=== Testing GPUDirect Storage (Python) ==="
-	python3 cufile_gds_example.py
+	python3 cufile_gds_example.py || true
 
-demo: $(TARGET)
+demo: all
 	@echo "=== Running Both Examples ==="
-	./demo_both_examples.sh
+	@./demo_both_examples.sh || true
+
+compare: clean
+	@echo "========================================"
+	@echo "Building Chapter 10 samples for both architectures..."
+	@echo "========================================"
+	@for arch in $(ARCH_LIST); do \
+		echo ""; \
+		echo ">>> Building $${arch}..."; \
+		$(MAKE) ARCH=$${arch} all; \
+	done
+
+blackwell: ARCH=sm_100
+blackwell: clean all
+
+grace-blackwell: ARCH=sm_121
+grace-blackwell: clean all
+
+profile-nsys: all
+	@echo "Nsight Systems timeline profiling..."
+	@for exe in $(TARGETS); do \
+		echo "Profiling $$exe..."; \
+		nsys profile --force-overwrite=true -t cuda,nvtx,osrt -o nsys_profile_$${exe}_$(ARCH) ./$$exe 2>/dev/null || echo "Profiling $$exe failed"; \
+	done
+
+profile-ncu: all
+	@echo "Nsight Compute kernel profiling..."
+	@for exe in $(TARGETS); do \
+		echo "Profiling $$exe..."; \
+		ncu --metrics achieved_occupancy,warp_execution_efficiency -o ncu_profile_$${exe}_$(ARCH) ./$$exe 2>/dev/null || echo "Profiling $$exe failed"; \
+	done
+
+profile-hta: all
+	@echo "HTA (Holistic Tracing Analysis) profiling..."
+	@for exe in $(TARGETS); do \
+		echo "Profiling $$exe..."; \
+		nsys profile --force-overwrite=true -t cuda,nvtx,osrt,cudnn,cublas,nccl -o hta_profile_$${exe}_$(ARCH) ./$$exe 2>/dev/null || echo "HTA profiling failed for $$exe"; \
+	done
+
+profile-perf: all
+	@echo "Perf system-level profiling..."
+	@for exe in $(TARGETS); do \
+		echo "Profiling $$exe with perf..."; \
+		perf record -g -o perf.data_$(ARCH)_$$exe ./$$exe || echo "perf failed for $$exe"; \
+		perf report -i perf.data_$(ARCH)_$$exe || true; \
+	done
+
+profile-all: all
+	@echo "Comprehensive profiling with all tools..."
+	@for exe in $(TARGETS); do \
+		echo "1. Nsight Systems timeline..."; \
+		nsys profile --force-overwrite=true -t cuda,nvtx,osrt -o comprehensive_timeline_$${exe}_$(ARCH) ./$$exe 2>/dev/null || true; \
+		echo "2. Nsight Compute kernel analysis..."; \
+		ncu --metrics achieved_occupancy,warp_execution_efficiency -o comprehensive_kernel_$${exe}_$(ARCH) ./$$exe 2>/dev/null || true; \
+		echo "3. Perf system-level analysis..."; \
+		perf record -g -o perf.data_$(ARCH)_$$exe ./$$exe || true; \
+		perf report -i perf.data_$(ARCH)_$$exe || true; \
+	done
 
 help:
 	@echo "Chapter 10: Memory Pipelines and GPUDirect Storage"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  make          - Build memory pipeline (CUDA)"
-	@echo "  make test     - Test memory pipeline with multiple sizes"
-	@echo "  make test-gds - Test GPUDirect Storage (Python)"
-	@echo "  make demo     - Run both examples back-to-back"
-	@echo "  make run      - Run memory pipeline (default size)"
-	@echo "  make clean    - Remove compiled binaries"
-	@echo "  make help     - Show this help message"
+	@echo "  make                - Build memory pipeline (CUDA)"
+	@echo "  make test           - Test memory pipeline with multiple sizes"
+	@echo "  make test-gds       - Test GPUDirect Storage (Python)"
+	@echo "  make demo           - Run both examples back-to-back"
+	@echo "  make run            - Run memory pipeline (default size)"
+	@echo "  make clean          - Remove compiled binaries"
+	@echo "  make help           - Show this help message"
+	@echo ""
+	@echo "Architecture targets:"
+	@echo "  make blackwell      - Build for Blackwell (sm_100)"
+	@echo "  make grace-blackwell- Build for Grace-Blackwell (sm_121)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  Memory Pipeline:       ./double_buffered_pipeline 512 512 512"
+	@echo "  Memory Pipeline:       ./baseline_double_buffered_pipeline$(SUFFIX) 512 512 512"
 	@echo "  GPUDirect Storage:     python3 cufile_gds_example.py"
 	@echo "  Both:                  make demo"
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(addsuffix _sm100,$(BASE_TARGETS)) $(addsuffix _sm121,$(BASE_TARGETS)) *.o *.so *.a double_buffered_pipeline
+	rm -f nsys_profile_* ncu_profile_* hta_profile_* perf.data_* comprehensive_*

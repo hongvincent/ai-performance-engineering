@@ -1,16 +1,65 @@
 #!/usr/bin/env python3
 """Architecture helpers for Blackwell and Grace-Blackwell GPUs."""
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 import os
 import subprocess
 import shutil
 import warnings
 from pathlib import Path
+
+# Suppress CUDA capability warnings for GB10 (12.1) - PyTorch supports up to 12.0
+warnings.filterwarnings("ignore", message=".*Found GPU.*which is of cuda capability.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*Minimum and Maximum cuda capability supported.*", category=UserWarning)
+
 import torch
 from importlib import metadata as importlib_metadata
+from contextlib import nullcontext
+
+try:
+    from torch.nn.attention import sdpa_kernel as _sdpa_kernel
+    from torch.nn.attention import SDPBackend as _SDPBackend
+    _NEW_SDPA_API_AVAILABLE = True
+except ImportError:
+    _sdpa_kernel = None  # type: ignore[assignment]
+    _SDPBackend = None  # type: ignore[assignment]
+    _NEW_SDPA_API_AVAILABLE = False
+
+_PREFERRED_SDPA_BACKENDS: List[Any] = []
+if _SDPBackend is not None:
+    for _backend_name in ("CUDNN", "FLASH_ATTENTION", "EFFICIENT_ATTENTION"):
+        if hasattr(_SDPBackend, _backend_name):
+            _PREFERRED_SDPA_BACKENDS.append(getattr(_SDPBackend, _backend_name))
+
+
+def prefer_sdpa_backends(order: Optional[List[Any]] = None):
+    """
+    Return a context manager that routes scaled_dot_product_attention to preferred backends.
+    
+    Uses the new torch.nn.attention.sdpa_kernel() API. Never falls back to the
+    deprecated torch.backends.cuda.sdp_kernel() API.
+
+    Example:
+        with prefer_sdpa_backends():
+            F.scaled_dot_product_attention(...)
+    """
+    if not _NEW_SDPA_API_AVAILABLE:
+        # Return no-op context manager - do NOT use deprecated API
+        return nullcontext()
+    
+    if order is None:
+        order = _PREFERRED_SDPA_BACKENDS
+    if _sdpa_kernel is None or not order:
+        return nullcontext()
+    return _sdpa_kernel(order)
+
+
+def prefer_flash_sdpa():
+    """Alias retained for backwards compatibility with earlier chapter drafts."""
+    return prefer_sdpa_backends()
 
 BLACKWELL_CC = "10.0"
+BLACKWELL_ULTRA_CC = "10.3"
 GRACE_BLACKWELL_MAJOR = 12
 
 def _parse_version_tuple(version: str) -> tuple:
@@ -36,13 +85,16 @@ class ArchitectureConfig:
             return "cpu"
 
         props = torch.cuda.get_device_properties(0)
-        compute_capability = f"{props.major}.{props.minor}"
+        major, minor = props.major, props.minor
+        compute_capability = f"{major}.{minor}"
 
-        if compute_capability == BLACKWELL_CC:
-            return "blackwell"
-
-        if props.major == GRACE_BLACKWELL_MAJOR:
+        if major == GRACE_BLACKWELL_MAJOR:
             return "grace_blackwell"
+
+        if major >= 10:
+            if major == 10 and minor >= 3:
+                return "blackwell_ultra"
+            return "blackwell"
 
         return "other"
 
@@ -52,7 +104,7 @@ class ArchitectureConfig:
                 "name": "Blackwell B200/B300",
                 "compute_capability": BLACKWELL_CC,
                 "sm_version": "sm_100",
-                "memory_bandwidth": "7.8 TB/s",
+                "memory_bandwidth": "up to ~8 TB/s",
                 "tensor_cores": "5th Gen",
                 "features": ["HBM3e", "TMA", "NVLink-C2C", "Stream-ordered Memory"],
                 "cuda_features": ["Stream-ordered Memory", "TMA", "HBM3e optimisations", "NVLink-C2C"],
@@ -78,11 +130,41 @@ class ArchitectureConfig:
                     "perf"
                 ],
             },
+            "blackwell_ultra": {
+                "name": "Blackwell Ultra B300",
+                "compute_capability": BLACKWELL_ULTRA_CC,
+                "sm_version": "sm_103",
+                "memory_bandwidth": "up to ~9 TB/s",
+                "tensor_cores": "5th Gen",
+                "features": ["HBM3e (288 GB)", "TMA", "NVLink-C2C", "Stream-ordered Memory"],
+                "cuda_features": ["Stream-ordered Memory", "TMA", "HBM3e optimisations", "NVLink-C2C"],
+                "pytorch_optimizations": [
+                    "torch.compile with max-autotune",
+                    "TMA-aware kernels",
+                    "HBM3e-aware allocation",
+                    "Stream-ordered memory APIs",
+                    "NVLink-C2C communication"
+                ],
+                "triton_features": [
+                    "Triton 3.5 Blackwell optimisations",
+                    "HBM3e access patterns",
+                    "TMA intrinsic support",
+                    "Stream-ordered memory",
+                    "Blackwell Ultra tuned kernels"
+                ],
+                "profiling_tools": [
+                    "Nsight Systems 2025.x",
+                    "Nsight Compute 2025.x",
+                    "HTA",
+                    "PyTorch Profiler",
+                    "perf"
+                ],
+            },
             "grace_blackwell": {
                 "name": "Grace-Blackwell GB10",
                 "compute_capability": "12.1",
                 "sm_version": "sm_121",
-                "memory_bandwidth": "1.5 TB/s (per GPU)",
+                "memory_bandwidth": "Grace LPDDR5X up to ~500 GB/s (single Grace)",
                 "tensor_cores": "5th Gen (Blackwell-class)",
                 "features": ["Grace-Blackwell coherence fabric", "TMA", "HBM3e", "NVLink-C2C"],
                 "cuda_features": ["Stream-ordered Memory", "TMA", "HBM3e optimizations", "NVLink-C2C"],
@@ -149,6 +231,17 @@ class ArchitectureConfig:
     def configure_pytorch_optimizations(self) -> None:
         if not torch.cuda.is_available():
             return
+
+        if self.arch in ("blackwell", "blackwell_ultra"):
+            if "TORCH_CUDA_ARCH_LIST" not in os.environ:
+                os.environ["TORCH_CUDA_ARCH_LIST"] = "10.0;10.3"
+            if "CMAKE_CUDA_ARCHITECTURES" not in os.environ:
+                os.environ["CMAKE_CUDA_ARCHITECTURES"] = "100;103"
+        elif self.arch == "grace_blackwell":
+            if "TORCH_CUDA_ARCH_LIST" not in os.environ:
+                os.environ["TORCH_CUDA_ARCH_LIST"] = "12.1"
+            if "CMAKE_CUDA_ARCHITECTURES" not in os.environ:
+                os.environ["CMAKE_CUDA_ARCHITECTURES"] = "121"
         
         # PyTorch Inductor configuration
         inductor = getattr(torch, "_inductor", None)
@@ -179,23 +272,23 @@ class ArchitectureConfig:
                 cfg.aggressive_fusion = True
         
         # Triton 3.5 configuration for Blackwell and Grace-Blackwell
-        if self.arch in ("blackwell", "grace_blackwell"):
+        if self.arch in ("blackwell", "blackwell_ultra", "grace_blackwell"):
             try:
                 import triton
                 # Configure Triton 3.5 for appropriate architecture
                 if hasattr(triton.runtime, "driver"):
                     if self.arch == "blackwell":
                         triton.runtime.driver.set_active_device_capability(10, 0)
+                    elif self.arch == "blackwell_ultra":
+                        triton.runtime.driver.set_active_device_capability(10, 3)
                     elif self.arch == "grace_blackwell":
                         # CUDA 13.0 PTXAS lacks SM 12.1 support for tensormap ops; target SM 12.0 instead.
                         triton.runtime.driver.set_active_device_capability(12, 0)
             except (ImportError, AttributeError):
                 pass
             
-            # Blackwell/GB10-specific environment variables for TMA
-            os.environ.setdefault("TRITON_CUDNN_ALGOS", "1")
-            os.environ.setdefault("TRITON_TMA_ENABLE", "1")
-            os.environ.setdefault("TRITON_ALWAYS_COMPILE", "0")  # Use kernel cache
+            # Note: TMA is enabled automatically via compute capability configuration above
+            # and TMA API usage in kernels. No environment variables needed.
             
             # Configure CUTLASS for torch.compile backend
             # Fix the cutlass_dir path to point to nvidia-cutlass-dsl installation
@@ -246,58 +339,72 @@ class ArchitectureConfig:
                     if not version_ok and system_ptxas:
                         os.environ["TRITON_PTXAS_PATH"] = system_ptxas
                         if VERBOSE_EXPERIMENTAL_FEATURES:
-                            print(f"✅ Triton: using system ptxas at {system_ptxas} for SM 12.1 support")
+                            print(f"PASSED: Triton: using system ptxas at {system_ptxas} for SM 12.1 support")
                 except Exception as ex:
                     if VERBOSE_EXPERIMENTAL_FEATURES:
-                        print(f"⚠️  Triton ptxas selection failed: {ex}")
-        
-        # PyTorch 2.9: Enable FlashAttention-3 for Blackwell
-        if hasattr(torch.backends.cuda, "enable_flash_sdp"):
-            torch.backends.cuda.enable_flash_sdp(True)
-            torch.backends.cuda.enable_mem_efficient_sdp(True)
-            torch.backends.cuda.enable_math_sdp(False)  # Disable slow fallback
+                        print(f"WARNING: Triton ptxas selection failed: {ex}")
         
         # Standard CUDA configurations
         os.environ.setdefault("TORCH_CUDNN_V8_API_ENABLED", "1")
-        os.environ.setdefault("TORCH_CUDNN_V8_API_DISABLED", "0")
-        if "PYTORCH_ALLOC_CONF" not in os.environ:
-            legacy_alloc = os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
-            os.environ["PYTORCH_ALLOC_CONF"] = legacy_alloc or "max_split_size_mb:128,expandable_segments:True"
-        os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+        # Use new PYTORCH_ALLOC_CONF (preferred), fallback to legacy PYTORCH_CUDA_ALLOC_CONF
+        alloc_conf = os.environ.get("PYTORCH_ALLOC_CONF")
+        legacy_alloc = os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+        if alloc_conf is None:
+            alloc_conf = legacy_alloc or "max_split_size_mb:256,expandable_segments:True"
+            if VERBOSE_EXPERIMENTAL_FEATURES and legacy_alloc:
+                print("Migrated PYTORCH_CUDA_ALLOC_CONF to PYTORCH_ALLOC_CONF (new API)")
+        os.environ["PYTORCH_ALLOC_CONF"] = alloc_conf
         
-        # PyTorch 2.9: Enable TF32 using the new precision API with graceful fallback.
-        cuda_matmul = getattr(torch.backends.cuda, "matmul", None)
-        matmul_tf32_enabled = False
-        if cuda_matmul is not None:
-            if hasattr(cuda_matmul, "allow_tf32"):
-                try:
-                    cuda_matmul.allow_tf32 = True
-                    matmul_tf32_enabled = True
-                except (RuntimeError, AttributeError):
-                    matmul_tf32_enabled = False
-            if not matmul_tf32_enabled and hasattr(cuda_matmul, "fp32_precision"):
-                try:
-                    # Valid options are 'ieee', 'tf32', or 'none'.
-                    cuda_matmul.fp32_precision = "tf32"
-                    matmul_tf32_enabled = True
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
+        # PyTorch 2.9+: Enable TF32 using the new precision API ONLY (do not mix APIs).
+        # CRITICAL: Never touch the old API (allow_tf32) to prevent API mixing detection.
+        # PyTorch 2.9+ detects when both old and new APIs are used and raises RuntimeError.
+        # This function uses ONLY the new API to ensure compatibility with torch.compile.
+        # 
+        # IMPORTANT: If old API was already touched by PyTorch internals or other code,
+        # we cannot configure TF32 here without causing mixing errors. Skip configuration
+        # in that case and let PyTorch use its default TF32 settings.
+        
+        # Use ONLY new API for matmul TF32 (PyTorch 2.9+)
+        # Do NOT check or touch allow_tf32 - that triggers mixing detection
+        # Suppress TF32 API deprecation warnings when setting precision
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*Please use the new API settings to control TF32.*", category=UserWarning)
+            try:
+                if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
+                    # Only set if new API exists - never fall back to old API
+                    torch.backends.cuda.matmul.fp32_precision = "tf32"
+                elif VERBOSE_EXPERIMENTAL_FEATURES:
+                    print("WARNING: New TF32 API (fp32_precision) not available - TF32 not configured")
+            except RuntimeError as e:
+                # If mixing error occurs, skip TF32 configuration (let PyTorch handle it)
+                # This happens if old API was already touched elsewhere
+                if "mix of the legacy and new APIs" in str(e):
+                    if VERBOSE_EXPERIMENTAL_FEATURES:
+                        print("WARNING: Skipping TF32 configuration due to API mixing - PyTorch will handle it")
+                pass
+            except (AttributeError, TypeError):
+                pass
 
-        cudnn_conv = getattr(torch.backends.cudnn, "conv", None)
-        cudnn_tf32_enabled = False
-        if cudnn_conv is not None:
-            if hasattr(torch.backends.cudnn, "allow_tf32"):
-                try:
-                    torch.backends.cudnn.allow_tf32 = True
-                    cudnn_tf32_enabled = True
-                except (RuntimeError, AttributeError):
-                    cudnn_tf32_enabled = False
-            if not cudnn_tf32_enabled and hasattr(cudnn_conv, "fp32_precision"):
-                try:
-                    cudnn_conv.fp32_precision = "tf32"
-                    cudnn_tf32_enabled = True
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
+        # Use ONLY new API for cuDNN conv TF32 (PyTorch 2.9+)
+        # Do NOT check or touch allow_tf32 - that triggers mixing detection
+        # Suppress TF32 API deprecation warnings when setting precision
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*Please use the new API settings to control TF32.*", category=UserWarning)
+            try:
+                if hasattr(torch.backends.cudnn.conv, "fp32_precision"):
+                    # Only set if new API exists - never fall back to old API
+                    torch.backends.cudnn.conv.fp32_precision = "tf32"
+                elif VERBOSE_EXPERIMENTAL_FEATURES:
+                    print("WARNING: New TF32 API (fp32_precision) not available for cuDNN - TF32 not configured")
+            except RuntimeError as e:
+                # If mixing error occurs, skip TF32 configuration (let PyTorch handle it)
+                # This happens if old API was already touched elsewhere
+                if "mix of the legacy and new APIs" in str(e):
+                    if VERBOSE_EXPERIMENTAL_FEATURES:
+                        print("WARNING: Skipping TF32 configuration due to API mixing - PyTorch will handle it")
+                pass
+            except (AttributeError, TypeError):
+                pass
 
     def print_info(self) -> None:
         cfg = self.config
@@ -356,7 +463,7 @@ def _install_symmetric_memory_shim() -> None:
     
     if not ENABLE_SYMMETRIC_MEMORY_SHIM:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("ℹ️  Symmetric memory shim disabled via ENABLE_SYMMETRIC_MEMORY_SHIM=0")
+            print("INFO:  Symmetric memory shim disabled via ENABLE_SYMMETRIC_MEMORY_SHIM=0")
         return
 
     try:
@@ -364,15 +471,25 @@ def _install_symmetric_memory_shim() -> None:
         import torch.distributed.nn  # noqa: F401 - ensures dist.nn is registered
     except ImportError:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("⚠️  Symmetric memory shim: torch.distributed not available")
+            print("WARNING: Symmetric memory shim: torch.distributed not available")
         return
 
-    # Check if stable API already exists
+    # Version detection: PyTorch 2.9+ should have stable API
+    # Check PyTorch version to determine which API to use
+    pytorch_version_str = torch.__version__
+    pytorch_version = _parse_version_tuple(pytorch_version_str)
+    
+    # Check if stable API already exists (PyTorch 2.9+)
     if hasattr(dist.nn, "SymmetricMemory"):
         _SYMMETRIC_SHIM_INSTALLED = True
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("✅ Symmetric memory: Using stable PyTorch API")
+            print(f"PASSED: Symmetric memory: Using stable PyTorch API (PyTorch {pytorch_version_str})")
         return
+    
+    # PyTorch 2.9+ should have stable API - warn if missing
+    if pytorch_version >= (2, 9, 0):
+        if VERBOSE_EXPERIMENTAL_FEATURES:
+            print(f"WARNING: Symmetric memory: PyTorch {pytorch_version_str} detected but stable API not found, using experimental API")
 
     # Attempt to bridge from experimental API
     try:
@@ -381,18 +498,18 @@ def _install_symmetric_memory_shim() -> None:
         from torch._C._distributed_c10d import ProcessGroup as _ProcessGroup  # type: ignore
     except ImportError as e:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print(f"⚠️  Symmetric memory shim: Experimental API not available ({e})")
+            print(f"WARNING: Symmetric memory shim: Experimental API not available ({e})")
         return
 
     # Check NVSHMEM availability
     try:
         if not _symm.is_nvshmem_available():
             if VERBOSE_EXPERIMENTAL_FEATURES:
-                print("⚠️  Symmetric memory shim: NVSHMEM not available")
+                print("WARNING: Symmetric memory shim: NVSHMEM not available")
             return
     except Exception as e:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print(f"⚠️  Symmetric memory shim: NVSHMEM check failed ({e})")
+            print(f"WARNING: Symmetric memory shim: NVSHMEM check failed ({e})")
         return
 
     class _SymmetricMemoryWrapper:
@@ -416,7 +533,7 @@ def _install_symmetric_memory_shim() -> None:
                 backend = _symm.get_backend(tensor.device)
             except Exception as e:
                 if VERBOSE_EXPERIMENTAL_FEATURES:
-                    print(f"⚠️  Symmetric memory: Failed to get backend ({e})")
+                    print(f"WARNING: Symmetric memory: Failed to get backend ({e})")
                 backend = None
             
             if backend != "NVSHMEM":
@@ -424,7 +541,7 @@ def _install_symmetric_memory_shim() -> None:
                     _symm.set_backend("NVSHMEM")
                 except Exception as e:
                     if VERBOSE_EXPERIMENTAL_FEATURES:
-                        print(f"⚠️  Symmetric memory: Failed to set NVSHMEM backend ({e})")
+                        print(f"WARNING: Symmetric memory: Failed to set NVSHMEM backend ({e})")
                     # Continue anyway - may still work
 
             # Allocate symmetric buffer
@@ -446,7 +563,7 @@ def _install_symmetric_memory_shim() -> None:
                     self.buffer.copy_(tensor)
             except RuntimeError as e:
                 if VERBOSE_EXPERIMENTAL_FEATURES:
-                    print(f"⚠️  Symmetric memory: Failed to copy initial data ({e})")
+                    print(f"WARNING: Symmetric memory: Failed to copy initial data ({e})")
                 # Continue - buffer is allocated, data may be set later
 
             # Create rendezvous handle
@@ -487,29 +604,29 @@ def _install_symmetric_memory_shim() -> None:
         dist.nn.SymmetricMemory = _SymmetricMemoryWrapper  # type: ignore[attr-defined]
         _SYMMETRIC_SHIM_INSTALLED = True
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("✅ Symmetric memory shim: Installed successfully")
+            print("PASSED: Symmetric memory shim: Installed successfully")
     except Exception as e:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print(f"❌ Symmetric memory shim: Installation failed ({e})")
+            print(f"FAILED: Symmetric memory shim: Installation failed ({e})")
         # Don't raise - allow code to continue without shim
 
 
 def _patch_triton_sm_arch_suffix() -> None:
     """
-    Patch Triton compiler to handle Blackwell (SM 10.0) architecture correctly.
+    Patch Triton compiler to handle Blackwell (SM 10.0) and Grace-Blackwell (SM 12.1) architectures correctly.
     
     WHY THIS EXISTS:
-    Triton 3.5+ may generate SM architecture names with 'a' suffix (e.g., "sm_100a")
+    Triton 3.5+ may generate SM architecture names with 'a' suffix (e.g., "sm_100a", "sm_121a")
     that PTXAS doesn't support. This patch ensures compatibility by:
     1. Clamping SM 10.1+ to SM 10.0 (Blackwell) until Triton adds native support
-    2. Removing 'a' suffix from architecture names when present
+    2. Removing 'a' suffix from architecture names when present (sm_121a -> sm_121, sm_100a -> sm_100)
     
     WHAT IT DOES:
     - Patches sm_arch_from_capability() to return compatible SM names
     - Patches CUDABackend.make_ptx() and make_cubin() to clamp capabilities
     
     WHEN TO DISABLE:
-    - Set ENABLE_TRITON_PATCH=0 if Triton adds native Blackwell support
+    - Set ENABLE_TRITON_PATCH=0 if Triton adds native Blackwell/Grace-Blackwell support
     - The patch gracefully skips if Triton is unavailable
     
     KNOWN ISSUES:
@@ -518,7 +635,26 @@ def _patch_triton_sm_arch_suffix() -> None:
     
     PERFORMANCE IMPACT:
     - None: Only affects compilation, not runtime
-    - Required for Triton kernels to compile on Blackwell
+    - Required for Triton kernels to compile on Blackwell and Grace-Blackwell
+    
+    UPSTREAM BUG TRACKING:
+    This is a known upstream Triton compiler bug. Similar issues are tracked in:
+    
+    - **SGLang**: GitHub issue #8879
+      https://github.com/sgl-project/sglang/issues/8879
+      "[Bug] GPT-OSS Blackwell: ptxas fails with invalid architecture sm_120a during Triton kernel compilation"
+    
+    - **SGLang**: GitHub issue #1413 (related)
+      https://github.com/sgl-project/sglang/issues/1413
+      "[Bug] triton attention-backend bug" - TMA descriptor initialization failures
+    
+    - **vLLM**: NVIDIA Developer Forums discussion
+      https://forums.developer.nvidia.com/t/running-llama-3-1-8b-fp4-get-triton-error-value-sm-121a-is-not-defined-for-option-gpu-name/348808
+      Error: "Value 'sm_121a' is not defined for option 'gpu-name'"
+    
+    - **Upstream Triton**: Should be reported/fixed in Triton repository
+      https://github.com/triton-lang/triton/issues
+      Bug: Triton generates SM architecture names with 'a' suffix that PTXAS doesn't support
     """
     global _TRITON_ARCH_PATCHED
     
@@ -527,21 +663,36 @@ def _patch_triton_sm_arch_suffix() -> None:
     
     if not ENABLE_TRITON_PATCH:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("ℹ️  Triton SM arch patch disabled via ENABLE_TRITON_PATCH=0")
+            print("INFO:  Triton SM arch patch disabled via ENABLE_TRITON_PATCH=0")
         return
 
     try:
+        import triton
         import triton.backends.nvidia.compiler as triton_compiler
     except (ImportError, ModuleNotFoundError):
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("⚠️  Triton SM arch patch: Triton not available")
+            print("WARNING: Triton SM arch patch: Triton not available")
         return
+
+    # Version check: Only apply patch to Triton 3.5+ where the bug exists
+    # Triton < 3.5 doesn't have the 'a' suffix bug
+    try:
+        triton_version_str = getattr(triton, "__version__", "0.0.0")
+        triton_version = _parse_version_tuple(triton_version_str)
+        # Bug exists in Triton 3.5.0 and later
+        if triton_version < (3, 5, 0):
+            if VERBOSE_EXPERIMENTAL_FEATURES:
+                print(f"INFO:  Triton SM arch patch: Skipping (Triton {triton_version_str} < 3.5.0, bug not present)")
+            return
+    except Exception as e:
+        if VERBOSE_EXPERIMENTAL_FEATURES:
+            print(f"WARNING: Triton SM arch patch: Could not check version ({e}), applying patch anyway")
 
     # Check if already patched
     if getattr(triton_compiler, "_sm_arch_patch_applied", False):
         _TRITON_ARCH_PATCHED = True
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print("✅ Triton SM arch patch: Already applied")
+            print("PASSED: Triton SM arch patch: Already applied")
         return
 
     # Patch sm_arch_from_capability
@@ -568,7 +719,7 @@ def _patch_triton_sm_arch_suffix() -> None:
         triton_compiler._sm_arch_patch_applied = True  # type: ignore[attr-defined]
     except Exception as e:
         if VERBOSE_EXPERIMENTAL_FEATURES:
-            print(f"⚠️  Triton SM arch patch: Failed to patch sm_arch_from_capability ({e})")
+            print(f"WARNING: Triton SM arch patch: Failed to patch sm_arch_from_capability ({e})")
         return
 
     # Patch CUDABackend PTX/CUBIN generation
@@ -593,12 +744,12 @@ def _patch_triton_sm_arch_suffix() -> None:
             implementation_cls._capability_clamp_patch = True  # type: ignore[attr-defined]
         except Exception as e:
             if VERBOSE_EXPERIMENTAL_FEATURES:
-                print(f"⚠️  Triton SM arch patch: Failed to patch CUDABackend ({e})")
+                print(f"WARNING: Triton SM arch patch: Failed to patch CUDABackend ({e})")
             # Continue - sm_arch_from_capability patch may be sufficient
     
     _TRITON_ARCH_PATCHED = True
     if VERBOSE_EXPERIMENTAL_FEATURES:
-        print("✅ Triton SM arch patch: Applied successfully")
+        print("PASSED: Triton SM arch patch: Applied successfully")
 
 
 def configure_optimizations() -> None:

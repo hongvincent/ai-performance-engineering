@@ -6,7 +6,7 @@ NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) -lineinfo -Xptxas -O3
 NVCC_DEBUG_FLAGS = $(NVCC_FLAGS) -G
 SUFFIX = $(TARGET_SUFFIX)
 
-BASE_TARGETS = nvlink_c2c_p2p_blackwell gb200_coherency cpu_gpu_zero_copy_coherent
+BASE_TARGETS = baseline_memory_transfer optimized_memory_transfer_zero_copy optimized_memory_transfer_nvlink cpu_gpu_grace_blackwell_coherency
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
 .PHONY: all clean compare profile-hta profile-perf profile-all blackwell grace-blackwell debug $(TARGETS)
@@ -15,13 +15,16 @@ all: $(TARGETS)
 	@echo "Building Chapter 2 targets with $(ARCH) (CUDA $(CUDA_VERSION))"
 	@echo "✓ Targeting $(ARCH_NAME)"
 
-nvlink_c2c_p2p_blackwell$(SUFFIX): nvlink_c2c_p2p_blackwell.cu
+baseline_memory_transfer$(SUFFIX): baseline_memory_transfer.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
-gb200_coherency$(SUFFIX): gb200_grace_blackwell_coherency.cu
+optimized_memory_transfer_zero_copy$(SUFFIX): optimized_memory_transfer_zero_copy.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
-cpu_gpu_zero_copy_coherent$(SUFFIX): cpu_gpu_zero_copy_coherent.cu
+optimized_memory_transfer_nvlink$(SUFFIX): optimized_memory_transfer_nvlink.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+
+cpu_gpu_grace_blackwell_coherency$(SUFFIX): cpu_gpu_grace_blackwell_coherency.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
 compare: clean
@@ -81,10 +84,11 @@ profile-all: all
 
 clean:
 	rm -f nvlink_c2c_p2p_blackwell_sm100 nvlink_c2c_p2p_blackwell_sm121
-	rm -f gb200_coherency_sm100 gb200_coherency_sm121
+	rm -f cpu_gpu_grace_blackwell_coherency_sm100 cpu_gpu_grace_blackwell_coherency_sm121
+	rm -f cpu_gpu_zero_copy_coherent_sm100 cpu_gpu_zero_copy_coherent_sm121
 	rm -f *.o *.so *.a
 	rm -f nsys_profile_* hta_profile_* perf.data_* comprehensive_*
 debug:
 	@echo "Building Chapter 2 debug targets with lineinfo and -G"
 	$(NVCC) $(NVCC_DEBUG_FLAGS) -o nvlink_c2c_p2p_blackwell_debug nvlink_c2c_p2p_blackwell.cu
-	$(NVCC) $(NVCC_DEBUG_FLAGS) -o gb200_coherency_debug gb200_grace_blackwell_coherency.cu
+	$(NVCC) $(NVCC_DEBUG_FLAGS) -o cpu_gpu_grace_blackwell_coherency_debug cpu_gpu_grace_blackwell_coherency.cu

@@ -57,14 +57,11 @@ echo ""
 # Set environment variables for optimal PyTorch profiling
 export CUDA_LAUNCH_BLOCKING=0
 export CUDA_CACHE_DISABLE=0
-export PYTORCH_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
+export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:128,expandable_segments:True}}
 export TORCH_CUDNN_V8_API_ENABLED=1
 export TORCH_SHOW_CPP_STACKTRACES=1
-
-# Enhanced environment variables for latest features
-export TORCH_CUDNN_V8_API_DISABLED=0
+export PYTHONFAULTHANDLER=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
-export PYTORCH_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
 unset PYTORCH_CUDA_ALLOC_CONF 2>/dev/null || true
 
 # Create timestamp for this profiling session
@@ -105,7 +102,7 @@ def setup_architecture_optimizations():
         print(f"Compute Capability: {compute_capability}")
 
         if compute_capability == "10.0":  # Blackwell B200/B300
-            print("✓ Enabling Blackwell B200/B300 optimizations")
+            print("Enabling Blackwell B200/B300 optimizations")
             if hasattr(torch._inductor.config.triton, "use_blackwell_optimizations"):
                 torch._inductor.config.triton.use_blackwell_optimizations = True
             if hasattr(torch._inductor.config.triton, "hbm3e_optimizations"):

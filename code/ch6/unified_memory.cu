@@ -24,26 +24,35 @@ int main() {
 
   int device = 0;
   cudaGetDevice(&device);
-  
-  // CUDA 13.0 API: cudaMemPrefetchAsync requires cudaMemLocation struct
-  struct cudaMemLocation gpuLoc;
-  gpuLoc.type = cudaMemLocationTypeDevice;
-  gpuLoc.id = device;
-  cudaMemPrefetchAsync(data, bytes, gpuLoc, 0, 0);
+
+  cudaStream_t stream;
+  cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+
+  cudaMemLocation gpu_loc{};
+  gpu_loc.type = cudaMemLocationTypeDevice;
+  gpu_loc.id = device;
+  cudaMemPrefetchAsync(data, bytes, gpu_loc, /*flags=*/0, stream);
 
   int block = 256;
   int grid = (N + block - 1) / block;
-  kernel<<<grid, block>>>(data, N);
-  cudaDeviceSynchronize();
+  kernel<<<grid, block, 0, stream>>>(data, N);
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    printf("kernel launch failed: %s\n", cudaGetErrorString(err));
+    cudaStreamDestroy(stream);
+    cudaFree(data);
+    return 1;
+  }
 
-  struct cudaMemLocation cpuLoc;
-  cpuLoc.type = cudaMemLocationTypeHost;
-  cpuLoc.id = 0;
-  cudaMemPrefetchAsync(data, bytes, cpuLoc, 0, 0);
-  cudaDeviceSynchronize();
+  cudaMemLocation cpu_loc{};
+  cpu_loc.type = cudaMemLocationTypeHost;
+  cpu_loc.id = 0;
+  cudaMemPrefetchAsync(data, bytes, cpu_loc, /*flags=*/0, stream);
+  cudaStreamSynchronize(stream);
 
   printf("First value: %.1f\n", data[0]);
 
   cudaFree(data);
+  cudaStreamDestroy(stream);
   return 0;
 }

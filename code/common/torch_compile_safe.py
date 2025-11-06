@@ -91,7 +91,7 @@ def _compile_with_timeout(
     
     if not result_container["done"]:
         raise CompilationTimeoutError(
-            f"Compilation exceeded timeout of {timeout} seconds. "
+            f"Compilation exceeded timeout of {timeout} seconds during compile. "
             f"This is common for models >40B parameters. "
             f"Consider using eager mode or increasing timeout."
         )
@@ -143,7 +143,7 @@ def safe_compile(
         if warn_on_skip:
             param_count = count_parameters(model)
             print(
-                f"⚠️  Skipping torch.compile for large model "
+                f"Skipping torch.compile for large model "
                 f"({param_count / 1e9:.1f}B parameters). "
                 f"Compilation hangs are common for models >40B."
             )
@@ -152,7 +152,7 @@ def safe_compile(
     if is_large and warn_on_skip:
         param_count = count_parameters(model)
         print(
-            f"⚠️  Warning: Compiling large model ({param_count / 1e9:.1f}B parameters). "
+            f"Warning: Compiling large model ({param_count / 1e9:.1f}B parameters). "
             f"This may take {timeout // 60} minutes or hang indefinitely. "
             f"Consider using eager mode or --skip-compile flag."
         )
@@ -177,13 +177,13 @@ def safe_compile(
         )
         
         if warn_on_skip and is_large:
-            print("✅ Compilation completed successfully (large model)")
+            print("Compilation completed successfully (large model)")
         
         return compiled
         
     except CompilationTimeoutError as e:
         if warn_on_skip:
-            print(f"❌ {e}")
+            print(f"{e}")
             print("   Falling back to eager mode.")
         return model
         
@@ -193,17 +193,17 @@ def safe_compile(
         # Check for known failure modes
         if "out of memory" in error_msg.lower():
             if warn_on_skip:
-                print(f"❌ Compilation failed: OOM. Falling back to eager mode.")
+                print(f"Compilation failed: OOM. Falling back to eager mode.")
         elif "duplicate template name" in error_msg.lower():
             if warn_on_skip:
                 print(
-                    f"⚠️  Compilation skipped: Known PyTorch issue "
+                    f"Compilation skipped: Known PyTorch issue "
                     f"(duplicate kernel template name). "
                     f"Falling back to eager mode."
                 )
         else:
             if warn_on_skip:
-                print(f"❌ Compilation failed: {error_msg}")
+                print(f"Compilation failed: {error_msg}")
                 print("   Falling back to eager mode.")
         
         return model
@@ -349,7 +349,7 @@ def partial_compile(
     # If model is small enough, use full compilation
     if not is_large_model(model):
         if verbose:
-            print("✅ Model is small, using full compilation")
+            print("Model is small, using full compilation")
         return safe_compile(model, mode=mode, **kwargs)
     
     # Detect transformer layers
@@ -358,7 +358,7 @@ def partial_compile(
     if layers is None:
         if verbose:
             print(
-                "⚠️  Could not detect transformer layers automatically. "
+                "Could not detect transformer layers automatically. "
                 "Falling back to eager mode for large model."
             )
         return model
@@ -375,8 +375,8 @@ def partial_compile(
             layer_indices = list(range(num_layers))
     
     if verbose:
-        print(f"✅ Detected {len(layers)} transformer layers")
-        print(f"🔧 Compiling layers: {layer_indices}")
+        print(f"Detected {len(layers)} transformer layers")
+        print(f"Compiling layers: {layer_indices}")
         print(f"   (Mode: {mode}, Timeout per layer: {timeout_per_layer}s)")
     
     # Compile each layer individually
@@ -404,18 +404,18 @@ def partial_compile(
                 layers[idx] = compiled_layer
                 compiled_count += 1
                 if verbose:
-                    print("✅")
+                    print("OK")
             else:
                 failed_count += 1
                 if verbose:
-                    print("⚠️  (fallback to eager)")
+                    print("(fallback to eager)")
         except Exception as e:
             failed_count += 1
             if verbose:
-                print(f"❌ ({str(e)[:50]})")
+                print(f"({str(e)[:50]})")
     
     if verbose:
-        print(f"\n✅ Partial compilation complete:")
+        print(f"\nPartial compilation complete:")
         print(f"   - Compiled: {compiled_count} layers")
         print(f"   - Failed/skipped: {failed_count} layers")
         print(f"   - Total: {len(layers)} layers in model")
@@ -443,7 +443,7 @@ def smart_compile(
     Args:
         model: Model to compile
         mode: Compilation mode
-        profile_first: Profile model before deciding (not implemented yet)
+        profile_first: Profile model before deciding (TODO: implement profiling-based mode selection)
         **kwargs: Additional torch.compile arguments
     
     Returns:
@@ -456,23 +456,23 @@ def smart_compile(
     param_count = count_parameters(model)
     param_count_b = param_count / 1e9
     
-    print(f"🔍 Model size: {param_count_b:.2f}B parameters")
+    print(f"Model size: {param_count_b:.2f}B parameters")
     
     # Strategy selection
     if param_count_b < 1:
-        print("✅ Strategy: Full compilation (small model)")
+        print("Strategy: Full compilation (small model)")
         return safe_compile(model, mode=mode, **kwargs)
     
     elif param_count_b < 10:
-        print("✅ Strategy: Full compilation with timeout (medium model)")
+        print("Strategy: Full compilation with timeout (medium model)")
         return safe_compile(model, mode=mode, timeout=600, **kwargs)
     
     elif param_count_b < 40:
-        print("✅ Strategy: Partial compilation (large model)")
+        print("Strategy: Partial compilation (large model)")
         # Compile first 20 layers to get some benefit without hangs
         return partial_compile(model, max_layers=20, mode=mode, **kwargs)
     
     else:
-        print("⚠️  Strategy: Eager mode (very large model, compilation likely to hang)")
+        print("Strategy: Eager mode (very large model, compilation likely to hang)")
         return model
 

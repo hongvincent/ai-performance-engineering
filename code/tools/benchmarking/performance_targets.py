@@ -2,13 +2,19 @@
 """
 Performance targets and thresholds for all chapters.
 Extracted from README.md Performance Targets Summary.
+
+Peak performance values are loaded from benchmark_peak_results_*.json files
+if available (created during setup.sh). If not found, falls back to hardcoded
+baseline values.
 """
 
-from typing import Dict, Any
+import json
+import copy
+from pathlib import Path
+from typing import Dict, Any, Optional
 
-# Performance targets by chapter
-# Format: {"min": minimum acceptable, "target": ideal goal, "unit": display unit}
-TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
+# Default baseline targets (used as fallback if benchmark_peak hasn't run)
+_DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "overall": {
         "hbm3e_bandwidth_tbs": {"min": 3.0, "target": 3.5, "unit": "TB/s", "realistic_max": 4.0},
         "fp16_compute_tflops": {"min": 1000, "target": 2000, "unit": "TFLOPS", "realistic_max": 1300},
@@ -130,6 +136,169 @@ TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "metrics": {}
     },
 }
+
+
+def _load_peak_benchmark_results(search_dir: Path = None) -> Optional[Dict[str, Any]]:
+    """Load peak performance results from benchmark_peak_results_*.json."""
+    if search_dir is None:
+        # Try to find the project root (assume we're in tools/benchmarking/)
+        current = Path(__file__).parent
+        # Go up to code/ directory
+        search_dir = current.parent.parent
+    
+    # Find the most recent benchmark results file (support both uppercase and lowercase)
+    json_files = list(search_dir.glob("benchmark_peak_results_*.json"))
+    if not json_files:
+        # Fallback to old uppercase pattern for backwards compatibility
+        json_files = list(search_dir.glob("BENCHMARK_PEAK_RESULTS_*.json"))
+    if not json_files:
+        return None
+    
+    # Sort by modification time, get most recent
+    json_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    try:
+        with open(json_files[0]) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _get_peak_values() -> Dict[str, float]:
+    """Get measured peak values from benchmark results."""
+    benchmark_data = _load_peak_benchmark_results()
+    if not benchmark_data:
+        return {}
+    
+    peak_values = {}
+    
+    # Extract HBM memory bandwidth (previously hbm3e, now hbm)
+    hbm_data = benchmark_data.get("hbm") or benchmark_data.get("hbm3e")  # Support both
+    if hbm_data and "peak_bandwidth_tbs" in hbm_data:
+        peak_values["hbm_bandwidth_tbs"] = hbm_data["peak_bandwidth_tbs"]
+        # Also keep old name for compatibility
+        peak_values["hbm3e_bandwidth_tbs"] = hbm_data["peak_bandwidth_tbs"]
+    
+    # Extract FP4 compute
+    if "fp4_compute" in benchmark_data and "peak_tflops" in benchmark_data["fp4_compute"]:
+        peak_values["fp4_compute_tflops"] = benchmark_data["fp4_compute"]["peak_tflops"]
+    
+    # Extract FP6 compute
+    if "fp6_compute" in benchmark_data and "peak_tflops" in benchmark_data["fp6_compute"]:
+        peak_values["fp6_compute_tflops"] = benchmark_data["fp6_compute"]["peak_tflops"]
+    
+    # Extract FP8 compute
+    if "fp8_compute" in benchmark_data and "peak_tflops" in benchmark_data["fp8_compute"]:
+        peak_values["fp8_compute_tflops"] = benchmark_data["fp8_compute"]["peak_tflops"]
+    
+    # Extract FP16 compute
+    if "fp16_compute" in benchmark_data and "peak_tflops" in benchmark_data["fp16_compute"]:
+        peak_values["fp16_compute_tflops"] = benchmark_data["fp16_compute"]["peak_tflops"]
+    
+    # Extract torch.compile speedup
+    if "torch_compile" in benchmark_data and "speedup" in benchmark_data["torch_compile"]:
+        peak_values["torch_compile_speedup"] = benchmark_data["torch_compile"]["speedup"]
+    
+    return peak_values
+
+
+def _build_targets() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Build TARGETS dict with measured peak values if available."""
+    targets = copy.deepcopy(_DEFAULT_TARGETS)
+    peak_values = _get_peak_values()
+    
+    if not peak_values:
+        return targets
+    
+    # Update overall targets with measured peak values
+    # Use peak as target, and set min to 85% of peak
+    if "hbm_bandwidth_tbs" in peak_values or "hbm3e_bandwidth_tbs" in peak_values:
+        peak_tbs = peak_values.get("hbm_bandwidth_tbs") or peak_values.get("hbm3e_bandwidth_tbs")
+        targets["overall"]["hbm3e_bandwidth_tbs"] = {
+            "min": peak_tbs * 0.85,
+            "target": peak_tbs,
+            "unit": "TB/s",
+            "realistic_max": peak_tbs * 1.1,  # Allow 10% overhead
+        }
+        # Also update ch2 target
+        if "ch2" in targets and "metrics" in targets["ch2"]:
+            targets["ch2"]["metrics"]["hbm3e_bandwidth_tbs"] = {
+                "min": peak_tbs * 0.85,
+                "target": peak_tbs,
+                "unit": "TB/s",
+            }
+    
+    if "fp4_compute_tflops" in peak_values:
+        peak_tflops = peak_values["fp4_compute_tflops"]
+        # Update ch10 FP4 target if it exists, or add to overall
+        if "ch10" in targets and "metrics" in targets["ch10"]:
+            targets["ch10"]["metrics"]["fp4_tflops"] = {
+                "min": peak_tflops * 0.85,
+                "target": peak_tflops,
+                "unit": "TFLOPS",
+            }
+    
+    if "fp6_compute_tflops" in peak_values:
+        peak_tflops = peak_values["fp6_compute_tflops"]
+        # Update ch10 FP6 target if it exists, or add to overall
+        if "ch10" in targets and "metrics" in targets["ch10"]:
+            targets["ch10"]["metrics"]["fp6_tflops"] = {
+                "min": peak_tflops * 0.85,
+                "target": peak_tflops,
+                "unit": "TFLOPS",
+            }
+    
+    if "fp16_compute_tflops" in peak_values:
+        peak_tflops = peak_values["fp16_compute_tflops"]
+        targets["overall"]["fp16_compute_tflops"] = {
+            "min": peak_tflops * 0.85,
+            "target": peak_tflops,
+            "unit": "TFLOPS",
+            "realistic_max": peak_tflops * 1.1,
+        }
+        # Also update ch10 target
+        if "ch10" in targets and "metrics" in targets["ch10"]:
+            targets["ch10"]["metrics"]["fp16_tflops"] = {
+                "min": peak_tflops * 0.85,
+                "target": peak_tflops,
+                "unit": "TFLOPS",
+            }
+    
+    if "fp8_compute_tflops" in peak_values:
+        peak_tflops = peak_values["fp8_compute_tflops"]
+        # Update ch10 FP8 target
+        if "ch10" in targets and "metrics" in targets["ch10"]:
+            targets["ch10"]["metrics"]["fp8_tflops"] = {
+                "min": peak_tflops * 0.85,
+                "target": peak_tflops,
+                "unit": "TFLOPS",
+            }
+    
+    if "torch_compile_speedup" in peak_values:
+        peak_speedup = peak_values["torch_compile_speedup"]
+        targets["overall"]["torch_compile_speedup_small"] = {
+            "min": peak_speedup * 0.85,
+            "target": peak_speedup,
+            "unit": "x",
+        }
+        targets["overall"]["torch_compile_speedup_large"] = {
+            "min": peak_speedup * 0.85,
+            "target": peak_speedup,
+            "unit": "x",
+        }
+        # Also update ch14 target
+        if "ch14" in targets and "metrics" in targets["ch14"]:
+            targets["ch14"]["metrics"]["torch_compile_speedup_large"] = {
+                "min": peak_speedup * 0.85,
+                "target": peak_speedup,
+                "unit": "x",
+            }
+    
+    return targets
+
+
+# Build TARGETS with measured peak values (if available)
+TARGETS = _build_targets()
 
 
 def get_target(chapter: str, metric: str) -> Dict[str, Any]:

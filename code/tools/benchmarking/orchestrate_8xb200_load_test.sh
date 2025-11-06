@@ -5,7 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 # Color output
@@ -46,7 +46,7 @@ fi
 
 # Check for B200
 if nvidia-smi --query-gpu=name --format=csv,noheader | grep -q "B200"; then
-    echo -e "${GREEN}✓ B200 GPUs detected${NC}"
+    echo -e "${GREEN}B200 GPUs detected${NC}"
 else
     echo -e "${YELLOW}⚠ B200 GPUs not detected - running on available hardware${NC}"
 fi
@@ -67,7 +67,7 @@ export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-1}"
 export NCCL_P2P_LEVEL="${NCCL_P2P_LEVEL:-NVL}"
 
 echo ""
-echo -e "${GREEN}✓ Environment configured${NC}"
+echo -e "${GREEN}Environment configured${NC}"
 echo ""
 
 # Step 1: Start power monitoring in background
@@ -113,7 +113,7 @@ if torchrun --nproc_per_node="${NUM_GPUS}" \
     --target-qps "${TARGET_QPS}" \
     --output-json "${LOAD_TEST_OUTPUT}" \
     > "${LOAD_TEST_LOG}" 2>&1; then
-    echo -e "${GREEN}✓ Load test complete${NC}"
+    echo -e "${GREEN}Load test complete${NC}"
     LOAD_TEST_SUCCESS=1
 else
     echo -e "${RED}✗ Load test failed${NC}"
@@ -134,7 +134,7 @@ wait ${POWER_PID} 2>/dev/null || true
 sleep 2
 
 if [ -f "${POWER_OUTPUT}" ]; then
-    echo -e "${GREEN}✓ Power metrics collected${NC}"
+    echo -e "${GREEN}Power metrics collected${NC}"
 else
     echo -e "${YELLOW}⚠ Power metrics not available${NC}"
 fi
@@ -169,7 +169,7 @@ SYSTEM_INFO="${OUTPUT_DIR}/system_info.txt"
     env | grep NCCL | sort
 } > "${SYSTEM_INFO}" 2>&1
 
-echo -e "${GREEN}✓ System info collected${NC}"
+echo -e "${GREEN}System info collected${NC}"
 echo ""
 
 # Step 5: Calculate cost metrics
@@ -191,7 +191,7 @@ if [ -f "${POWER_OUTPUT}" ] && [ -f "${LOAD_TEST_OUTPUT}" ]; then
             > "${OUTPUT_DIR}/cost_calculation.log" 2>&1 || true
         
         if [ -f "${COST_REPORT}" ]; then
-            echo -e "${GREEN}✓ Cost analysis complete${NC}"
+            echo -e "${GREEN}Cost analysis complete${NC}"
         else
             echo -e "${YELLOW}⚠ Cost analysis unavailable${NC}"
         fi
@@ -289,18 +289,18 @@ except Exception as e:
     if [ ${LOAD_TEST_SUCCESS} -eq 1 ]; then
         echo "## Status"
         echo ""
-        echo "✅ **SUCCESS**: All tests completed successfully"
+        echo "[OK] **SUCCESS**: All tests completed successfully"
     else
         echo "## Status"
         echo ""
-        echo "❌ **FAILURE**: Load test encountered errors"
+        echo "ERROR: **FAILURE**: Load test encountered errors"
         echo ""
         echo "Check \`load_test.log\` for details."
     fi
     
 } > "${SUMMARY_REPORT}"
 
-echo -e "${GREEN}✓ Summary report generated${NC}"
+echo -e "${GREEN}Summary report generated${NC}"
 echo ""
 
 # Display summary
@@ -322,10 +322,10 @@ echo "  - system_info.txt: Hardware info"
 echo ""
 
 if [ ${LOAD_TEST_SUCCESS} -eq 1 ]; then
-    echo -e "${GREEN}✅ Test completed successfully!${NC}"
+    echo -e "${GREEN}[OK] Test completed successfully!${NC}"
     exit 0
 else
-    echo -e "${RED}❌ Test completed with errors${NC}"
+    echo -e "${RED}ERROR: Test completed with errors${NC}"
     echo "Check ${LOAD_TEST_LOG} for details"
     exit 1
 fi

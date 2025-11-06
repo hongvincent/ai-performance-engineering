@@ -8,12 +8,12 @@ Disaggregated inference separates prefill (prompt processing) and decode (token 
 
 After completing this chapter, you can:
 
-- ✅ Understand prefill vs decode characteristics and bottlenecks
-- ✅ Design disaggregated inference architectures
-- ✅ Implement KV cache management strategies
-- ✅ Apply continuous batching for higher throughput
-- ✅ Optimize latency vs throughput trade-offs
-- ✅ Choose between monolithic and disaggregated approaches
+- [OK] Understand prefill vs decode characteristics and bottlenecks
+- [OK] Design disaggregated inference architectures
+- [OK] Implement KV cache management strategies
+- [OK] Apply continuous batching for higher throughput
+- [OK] Optimize latency vs throughput trade-offs
+- [OK] Choose between monolithic and disaggregated approaches
 
 ## Prerequisites
 
@@ -58,10 +58,10 @@ Decode GPU:
 ```
 
 **Benefits**:
-- ✅ Better GPU utilization (70-90% prefill, 80-95% decode)
-- ✅ Lower TTFT (Time To First Token) for new requests
-- ✅ Higher throughput (specialized hardware)
-- ✅ Easier autoscaling (scale prefill and decode independently)
+- [OK] Better GPU utilization (70-90% prefill, 80-95% decode)
+- [OK] Lower TTFT (Time To First Token) for new requests
+- [OK] Higher throughput (specialized hardware)
+- [OK] Easier autoscaling (scale prefill and decode independently)
 
 ---
 
@@ -349,9 +349,9 @@ Batch constantly full → High utilization
 **Concept**: Store KV cache in fixed-size pages, like virtual memory.
 
 **Benefits**:
-- ✅ No fragmentation
-- ✅ Efficient memory sharing (multiple sequences sharing prompt)
-- ✅ Easy eviction (swap pages to CPU/NVMe)
+- [OK] No fragmentation
+- [OK] Efficient memory sharing (multiple sequences sharing prompt)
+- [OK] Easy eviction (swap pages to CPU/NVMe)
 
 ### 2. Prefix Caching
 
@@ -463,7 +463,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9, vLLM 0.3
+**Chapter Status**: [OK] Complete
 

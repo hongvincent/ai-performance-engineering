@@ -202,7 +202,7 @@ def _discover_cuda_examples(existing_names: Optional[Iterable[str]] = None) -> L
 EXAMPLES: List[Example] = [
     _example(
         name="ch1_performance_basics",
-        path="ch1/performance_basics.py",
+        path="ch1/baseline_performance.py",
         description="Goodput and profiling primer from Chapter 1.",
         tags=["ch01", "profiling", "training"],
         requires_modules=["torch", "psutil", "GPUtil", "numpy"],
@@ -562,7 +562,7 @@ EXAMPLES: List[Example] = [
     ),
     _example(
         name="tool_continuous_benchmark",
-        path="tools/continuous_benchmark.py",
+        path="tools/benchmarking/continuous_benchmark.py",
         description="Run a suite of benchmarks and store aggregated results.",
         tags=["tools", "automation"],
         requires_modules=["json"],

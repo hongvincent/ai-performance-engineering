@@ -50,7 +50,7 @@ def main() -> int:
             print(f"  Power draw: {power_draw_str} W (power limit not reported)")
 
         if not pstate.startswith("P0"):
-            print("  ⚠️  GPU not in maximum performance state (P0). Consider persisting clocks or enabling persistence mode.")
+            print("  WARNING: GPU not in maximum performance state (P0). Consider persisting clocks or enabling persistence mode.")
             issues += 1
         print()
 

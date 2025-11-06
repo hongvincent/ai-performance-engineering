@@ -8,13 +8,13 @@ The roofline model provides a systematic framework for analyzing kernel performa
 
 After completing this chapter, you can:
 
-- ✅ Understand and apply the roofline performance model
-- ✅ Calculate arithmetic intensity (FLOP/Byte) for kernels
-- ✅ Use roofline analysis to identify bottlenecks (compute vs memory-bound)
-- ✅ Apply micro-tiling to improve data reuse
-- ✅ Increase arithmetic intensity through optimization
-- ✅ Fuse kernels to reduce memory traffic
-- ✅ Measure and validate performance improvements
+- [OK] Understand and apply the roofline performance model
+- [OK] Calculate arithmetic intensity (FLOP/Byte) for kernels
+- [OK] Use roofline analysis to identify bottlenecks (compute vs memory-bound)
+- [OK] Apply micro-tiling to improve data reuse
+- [OK] Increase arithmetic intensity through optimization
+- [OK] Fuse kernels to reduce memory traffic
+- [OK] Measure and validate performance improvements
 
 ## Prerequisites
 
@@ -38,10 +38,10 @@ The roofline model visualizes the performance limits of your hardware and helps 
 3. **Ridge point**: Where memory and compute ceilings meet
 4. **Arithmetic intensity (AI)**: FLOP/Byte ratio (x-axis)
 
-### Roofline for NVIDIA B200
+### Roofline for NVIDIA GPU
 
 ```
-B200 Hardware Specs:
+NVIDIA GPU Hardware Specs:
 - Peak FP16 Compute: 2000 TFLOPS
 - HBM3e Bandwidth: 8 TB/s
 - Ridge Point: 2000 TFLOPS ÷ 8 TB/s = 250 FLOP/Byte
@@ -108,7 +108,7 @@ Compute-bound region: AI > 250
 // Bytes: Read A (N²), Read B (N²), Write C (N²) = 3N² × 4 bytes = 12N² bytes
 // AI = 2N³ / (12N² × 4) = N/24 FLOP/Byte
 
-// For N=1024: AI = 42.7 FLOP/Byte (memory-bound on B200)
+// For N=1024: AI = 42.7 FLOP/Byte (memory-bound on NVIDIA GPU)
 // For N=4096: AI = 170.7 FLOP/Byte (still memory-bound!)
 ```
 
@@ -210,7 +210,7 @@ __global__ void matmul_tiled(float* A, float* B, float* C, int N) {
 ```
 Naive:  AI = 0.25 FLOP/Byte,  45 GFLOPS  (2% of peak)
 Tiled:  AI = 32 FLOP/Byte,    256 GFLOPS (12% of peak)
-Speedup: 5.7x ✅
+Speedup: 5.7x [OK]
 ```
 
 ### Example: `micro_tiling_matmul.cu`
@@ -318,10 +318,10 @@ __global__ void matmul_register_tiled(float* A, float* B, float* C, int N) {
         }
     }
 }
-// AI = 256 FLOP/Byte (approaching B200's ridge point of 250!)
+// AI = 256 FLOP/Byte (approaching NVIDIA GPU's ridge point of 250!)
 ```
 
-**Performance comparison (2048×2048 on B200)**:
+**Performance comparison (2048×2048 on NVIDIA GPU)**:
 ```
 Naive:           2.5 TFLOPS,  AI = 0.25 FLOP/Byte (memory-bound)
 Tiled (shared):  45 TFLOPS,   AI = 32 FLOP/Byte   (18x speedup)
@@ -368,7 +368,7 @@ Register-Tiled MatMul (32×32×8 Microtiles):
 - **Data reuse hierarchy**: DRAM → SMEM → Registers
 - Each level reduces memory traffic by reusing data at faster memory tier
 - Register microtiling is the **payoff technique** taught in Ch9 after foundational tiling in Ch7
-- At AI = 256 FLOP/Byte, we're at the **ridge point** for B200 (roofline intersection)
+- At AI = 256 FLOP/Byte, we're at the **ridge point** for NVIDIA GPU (roofline intersection)
 
 ---
 
@@ -456,7 +456,7 @@ python3 fusion_pytorch.py
 ```
 Unfused: 12.5 ms (AI: 0.24 FLOP/Byte, 6 memory ops)
 Fused (torch.compile): 3.8 ms (AI: 0.71 FLOP/Byte, 2 memory ops)
-Speedup: 3.3x ✅
+Speedup: 3.3x [OK]
 Roofline: Moved right (higher AI)
 ```
 
@@ -514,7 +514,7 @@ __global__ void fusedL2Norm(float* x, float* out, int n) {
 ```
 Unfused: AI = 0.5 FLOP/Byte,  85 ms
 Fused:   AI = 2.5 FLOP/Byte, 34 ms
-Speedup: 2.5x ✅
+Speedup: 2.5x [OK]
 ```
 
 **How to run**:
@@ -526,15 +526,15 @@ make fused_l2norm
 ### Fusion Opportunities
 
 **Signs to fuse**:
-- ✅ Multiple small kernels back-to-back
-- ✅ Each kernel is memory-bound (low AI)
-- ✅ Intermediate results used once
-- ✅ Total register/shared memory fits
+- [OK] Multiple small kernels back-to-back
+- [OK] Each kernel is memory-bound (low AI)
+- [OK] Intermediate results used once
+- [OK] Total register/shared memory fits
 
 **Don't fuse if**:
-- ❌ Intermediate results reused multiple times
-- ❌ One kernel compute-bound, others memory-bound
-- ❌ Fused kernel requires too many registers
+- ERROR: Intermediate results reused multiple times
+- ERROR: One kernel compute-bound, others memory-bound
+- ERROR: Fused kernel requires too many registers
 
 ---
 
@@ -661,7 +661,7 @@ using Gemm = cutlass::gemm::device::Gemm<
     cutlass::layout::RowMajor,
     float,
     cutlass::arch::OpClassTensorOp,  // Use Tensor Cores
-    cutlass::arch::Sm100             // Blackwell
+    cutlass::arch::Sm100             // NVIDIA GPU
 >;
 
 Gemm gemm_op;
@@ -681,9 +681,9 @@ make cutlass_gemm_example
 **Purpose**: Use inline PTX for architecture-specific optimizations.
 
 **When to use**:
-- ✅ Architecture-specific instructions (Blackwell TMA)
-- ✅ Precise instruction scheduling
-- ❌ Most applications (CUDA C++ is sufficient)
+- [OK] Architecture-specific instructions (NVIDIA GPU TMA)
+- [OK] Precise instruction scheduling
+- ERROR: Most applications (CUDA C++ is sufficient)
 
 **How to run**:
 ```bash
@@ -743,7 +743,7 @@ cd ../ch1 && ./arithmetic_intensity_demo_sm100
 
 4. **Kernel fusion reduces memory traffic**: Fewer global memory accesses → Higher AI.
 
-5. **Target the ridge point**: For B200, AI > 250 FLOP/Byte moves you to compute-bound region.
+5. **Target the ridge point**: For NVIDIA GPU, AI > 250 FLOP/Byte moves you to compute-bound region.
 
 6. **Profile to measure actual AI**: Use `ncu` or see Chapter 1's roofline_analysis.py to validate improvements.
 
@@ -785,7 +785,7 @@ cd ../ch1 && ./arithmetic_intensity_demo_sm100
 ### Pitfall 6: Tiling Without Considering Memory Hierarchy
 **Problem**: Tile size doesn't fit in shared memory or causes bank conflicts.
 
-**Solution**: Match tile size to shared memory size (48KB per SM on B200). Use padding to avoid bank conflicts.
+**Solution**: Match tile size to shared memory size (48KB per SM on NVIDIA GPU). Use padding to avoid bank conflicts.
 
 ### Pitfall 7: Not Using torch.compile First
 **Problem**: Writing custom fusion for operations torch.compile can handle.
@@ -799,7 +799,7 @@ cd ../ch1 && ./arithmetic_intensity_demo_sm100
 **Master tensor cores** → [Chapter 10: Tensor Cores and Pipelines](../ch10/README.md)
 
 Learn about:
-- `tcgen05.mma` (Blackwell 5th-gen Tensor Cores)
+- `tcgen05.mma` (NVIDIA GPU 5th-gen Tensor Cores)
 - TMA (Tensor Memory Accelerator) for async loads
 - Double-buffered pipelines for 2x throughput
 - Achieving peak AI at ridge point with Tensor Cores
@@ -818,6 +818,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete (Restructured for roofline/AI focus)  
-**Last Updated**: November 3, 2025  
-**Tested On**: NVIDIA B200 GPU, CUDA 13.0, PyTorch 2.9
+**Chapter Status**: [OK] Complete
+

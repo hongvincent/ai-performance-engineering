@@ -41,10 +41,14 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 try:
-    import arch_config  # noqa: F401 - Configure Blackwell optimizations
-except ImportError:
-    pass  # Graceful fallback if arch_config not available
+    from arch_config import prefer_flash_sdpa  # type: ignore
+except Exception:
+    from contextlib import nullcontext
+
+    def prefer_flash_sdpa():
+        return nullcontext()
 
 import torch
 import torch.nn as nn
@@ -56,7 +60,7 @@ except ImportError:  # pragma: no cover - flex attention may be unavailable
     create_block_mask = None
 
 try:
-    from ch16.fp8_transformer_engine import (
+    from extras.ch16.fp8_transformer_engine import (
         TransformerEngineUnavailable,
         convert_linear_layers as convert_linear_layers_to_te,
         fp8_autocast as te_fp8_autocast,
@@ -266,13 +270,14 @@ class MultiheadAttentionBackend(nn.Module):
                 scale=self.head_dim ** -0.5,
             )
         else:
-            attn = torch.nn.functional.scaled_dot_product_attention(
-                query,
-                key,
-                value,
-                dropout_p=0.0,
-                is_causal=True,
-            )
+            with prefer_flash_sdpa():
+                attn = torch.nn.functional.scaled_dot_product_attention(
+                    query,
+                    key,
+                    value,
+                    dropout_p=0.0,
+                    is_causal=True,
+                )
 
         attn = attn.transpose(1, 2).reshape(batch, seq_len, self.d_model)
         return self.out_proj(attn)

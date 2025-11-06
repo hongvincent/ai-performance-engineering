@@ -1,67 +1,29 @@
 """
 Triton 3.5 TMA (Tensor Memory Accelerator) for Blackwell GPUs
 
-Demonstrates TMA descriptor support for bulk memory transfers on Blackwell.
-Requires SM 10.0, CUDA 13+, and Triton 3.5+.
+Demonstrates descriptor-backed TMA copies and GEMM kernels on Blackwell.
+Tested with SM100 (B200) on CUDA 13 / Triton 3.5. Pin Triton ≥3.5.1/post builds
+when targeting SM103 (B300) because 3.5.0 had known SM103 regressions.
 
-⚠️  GB10 (SM 12.1) NOTE:
-    This code will FAIL on GB10 with: "Instruction 'tensormap.replace' not 
-    supported on .target 'sm_121'". CUDA 13.0 doesn't support TMA instructions
-    for sm_121. See GB10_WAITING_ON.md. Regular Triton works fine on GB10.
+WARNING: Grace-Blackwell (SM12.1) note:
+    CUDA 13.0 PTXAS cannot emit tensor map ops for SM12.1 yet, so TMA kernels
+    fail on GB10. Regular Triton kernels continue to work on those devices.
 
-Blackwell B200 Optimizations:
-- 32-byte aligned tensor descriptors for 256-bit loads
-- Cache eviction policies (evict_first/evict_last) for L2 optimization
-- Double-buffered pipeline with prefetching for memory/compute overlap
-- Conservative autotune configs (BLOCK_K=32) to avoid current Triton pipeline
-  limitations, ready to expand once upstream issues are resolved
-- Direct broadcast for offset tensors to reduce register pressure
-
-================================================================================
-CRITICAL BLOCKER: Triton 3.5 Bug PREVENTS Optimal Blackwell TMA Performance
-================================================================================
-
-**BUG CONFIRMED ACTIVE** ❌ (Re-tested October 28, 2025)
-
-TMA (Tensor Memory Accelerator) is Blackwell's KEY feature for utilizing the
-7.8 TB/s HBM3e bandwidth. However, Triton 3.5 has a COMPILER BUG that CRASHES
-with optimal TMA configurations.
-
-ERROR WHEN USING AGGRESSIVE CONFIGS:
-  error: Failures have been detected while processing an MLIR pass pipeline
-  note: Pipeline failed while executing [`TritonGPUAssignLatencies` on
-        'builtin.module' operation]
-
-FORCED TO USE SUB-OPTIMAL CONFIGURATION:
-  - BLOCK_K=32     (should be 128+ for Blackwell)
-  - num_stages=1   (should be 4-5 for deep pipelines)
-  - num_warps=4    (should be 16 for tensor core saturation)
-
-WHAT BLACKWELL *SHOULD* SUPPORT (but Triton can't compile):
-  - BLOCK_K=128+   (4x more parallelism)
-  - num_stages=4-5 (deep pipeline to hide HBM3e latency)
-  - num_warps=16   (fully utilize SMs)
-
-PERFORMANCE IMPACT:
-  ❌ ~2x SLOWER than optimal Blackwell performance
-  ❌ HBM3e bandwidth: ~63% peak instead of 85-90%
-  ❌ Cannot fully leverage $30K+ GPU investment
-  ❌ GEMM: 210 TFLOPS instead of 350-400 TFLOPS potential
-
-REPRODUCTION:
-  See triton_tma_reproducer.py for minimal failing case.
-  Aggressive configs compile fine in standalone test, but fail when
-  integrated with TMA descriptor + autotune + GEMM dot operations.
-
-WORKAROUND:
-  Conservative configs (current) are ONLY option until Triton fixes upstream.
-  Monitoring: https://github.com/triton-lang/triton/issues
-
-BUSINESS IMPACT:
-  Blackwell B200 GPUs cannot reach advertised performance in Triton workloads.
-  Customers paying premium for HBM3e bandwidth get ~60% utilization.
-================================================================================
+Highlights:
+- 32-byte aligned tensor descriptors mapping to TMA hardware
+- Double-buffered pipelines (prefetch-next → compute-current → swap)
+- Warp specialization knobs (num_consumer_groups / num_buffers_warp_spec)
+- PyTorch allocator bridge so Triton TMA kernels can request scratch buffers
 """
+import pathlib
+import sys
+
+_EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_EXTRAS_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXTRAS_REPO_ROOT))
+
+from pathlib import Path
+
 
 import os
 import torch
@@ -196,15 +158,23 @@ def tma_copy_2d(src: torch.Tensor, dst: torch.Tensor) -> None:
 # TMA-Optimized GEMM with Descriptor Load
 # ============================================================================
 
-# CONFIRMED BUG: Triton 3.5 tritongpu-assign-latencies CRASHES with aggressive TMA configs!
-# Error: "Pipeline failed while executing [`TritonGPUAssignLatencies` on 'builtin.module' operation]"
-# MUST use conservative configs: BLOCK_K=32, num_stages=1, num_warps=4
-# Performance cost: ~2x slower than optimal, but REQUIRED to avoid compiler crash
 @triton.autotune(
     configs=[
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_warps=4, num_stages=1),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32}, num_warps=4, num_stages=1),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_warps=4, num_stages=1),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 128, 'BLOCK_K': 64, 'NUM_STAGES': 2},
+            num_warps=8,
+            num_stages=2,
+        ),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 128, 'BLOCK_K': 128, 'NUM_STAGES': 2},
+            num_warps=8,
+            num_stages=2,
+        ),
+        triton.Config(
+            {'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 64, 'NUM_STAGES': 3},
+            num_warps=8,
+            num_stages=3,
+        ),
     ],
     key=['M', 'N', 'K'],
 )
@@ -218,65 +188,103 @@ def tma_gemm_kernel(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
 ):
-    """Matrix multiplication using TMA tensor descriptors."""
+    """Matrix multiplication using Triton tensor descriptors (TMA-backed on Blackwell)."""
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
-    
+
     m0 = pid_m * BLOCK_M
     n0 = pid_n * BLOCK_N
-    
+
+    offs_m = m0 + tl.arange(0, BLOCK_M)
+    offs_n = n0 + tl.arange(0, BLOCK_N)
+    offs_k = tl.arange(0, BLOCK_K)
+
     A_desc = tl.make_tensor_descriptor(
         A_ptr,
         shape=[M, K],
         strides=[stride_am, stride_ak],
         block_shape=[BLOCK_M, BLOCK_K],
     )
-    
     B_desc = tl.make_tensor_descriptor(
         B_ptr,
         shape=[K, N],
         strides=[stride_bk, stride_bn],
         block_shape=[BLOCK_K, BLOCK_N],
     )
-    
-    C_desc = tl.make_tensor_descriptor(
-        C_ptr,
-        shape=[M, N],
-        strides=[stride_cm, stride_cn],
-        block_shape=[BLOCK_M, BLOCK_N],
-    )
-    
+
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-    
-    # Blackwell optimization: Manual double-buffering to overlap memory and compute.
-    # Triton currently mis-assigns latency for deeper pipelines, so num_stages=1 is
-    # enforced above; revisit once the upstream fix lands.
-    # Load first tile before loop to enable prefetching in loop body.
+
+    K_tiles = (K + BLOCK_K - 1) // BLOCK_K
+    if K_tiles == 0:
+        c_ptrs = C_ptr + (offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn)
+        c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+        tl.store(c_ptrs, acc, mask=c_mask)
+        return
+
     k0 = 0
-    a_cur = A_desc.load([m0, k0])
-    b_cur = B_desc.load([k0, n0])
-    
-    # Main loop with prefetching: enables async loads on Blackwell's 5th-gen tensor cores
-    for k0 in range(0, K, BLOCK_K):
-        # Prefetch next tile while computing current (memory/compute overlap)
-        next_k = k0 + BLOCK_K
-        a_next = a_cur
-        b_next = b_cur
-        if next_k < K:
-            a_next = A_desc.load([m0, next_k])
-            b_next = B_desc.load([next_k, n0])
-        
-        # Compute with current tile
+    if (m0 + BLOCK_M <= M) and (k0 + BLOCK_K <= K):
+        a_cur = A_desc.load([m0, k0])
+    else:
+        row_offsets = tl.broadcast_to(offs_m[:, None], (BLOCK_M, BLOCK_K))
+        col_offsets = tl.broadcast_to((k0 + offs_k)[None, :], (BLOCK_M, BLOCK_K))
+        a_cur = tl.load(
+            A_desc,
+            offsets=(row_offsets, col_offsets),
+            boundary_check=(0, 1),
+            padding_option="zero",
+        )
+
+    if (n0 + BLOCK_N <= N) and (k0 + BLOCK_K <= K):
+        b_cur = B_desc.load([k0, n0])
+    else:
+        row_offsets = tl.broadcast_to((k0 + offs_k)[:, None], (BLOCK_K, BLOCK_N))
+        col_offsets = tl.broadcast_to(offs_n[None, :], (BLOCK_K, BLOCK_N))
+        b_cur = tl.load(
+            B_desc,
+            offsets=(row_offsets, col_offsets),
+            boundary_check=(0, 1),
+            padding_option="zero",
+        )
+
+    for kt in tl.range(0, K_tiles, num_stages=NUM_STAGES, warp_specialize=True):
+        next_k = (kt + 1) * BLOCK_K
+
+        if kt + 1 < K_tiles:
+            if (m0 + BLOCK_M <= M) and (next_k + BLOCK_K <= K):
+                a_next = A_desc.load([m0, next_k])
+            else:
+                row_offsets = tl.broadcast_to(offs_m[:, None], (BLOCK_M, BLOCK_K))
+                col_offsets = tl.broadcast_to((next_k + offs_k)[None, :], (BLOCK_M, BLOCK_K))
+                a_next = tl.load(
+                    A_desc,
+                    offsets=(row_offsets, col_offsets),
+                    boundary_check=(0, 1),
+                    padding_option="zero",
+                )
+
+            if (n0 + BLOCK_N <= N) and (next_k + BLOCK_K <= K):
+                b_next = B_desc.load([next_k, n0])
+            else:
+                row_offsets = tl.broadcast_to((next_k + offs_k)[:, None], (BLOCK_K, BLOCK_N))
+                col_offsets = tl.broadcast_to(offs_n[None, :], (BLOCK_K, BLOCK_N))
+                b_next = tl.load(
+                    B_desc,
+                    offsets=(row_offsets, col_offsets),
+                    boundary_check=(0, 1),
+                    padding_option="zero",
+                )
+
         acc += tl.dot(a_cur, b_cur, out_dtype=tl.float32)
-        
-        # Swap buffers for next iteration
-        if next_k < K:
+
+        if kt + 1 < K_tiles:
             a_cur = a_next
             b_cur = b_next
-    
-    # Store result with boundary checking
-    C_desc.store([m0, n0], acc)
+
+    c_ptrs = C_ptr + (offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn)
+    c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+    tl.store(c_ptrs, acc, mask=c_mask)
 
 
 def tma_gemm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
@@ -429,11 +437,11 @@ def demonstrate_tma_features():
     print("  - Up to 7.8 TB/s bandwidth on B200")
     
     print("\n[2] Blackwell B200 Optimizations Applied")
-    print("  - Double-buffered pipeline with prefetching")
-    print("  - Cache eviction policies (evict_first/evict_last)")
-    print("  - Expanded autotune: BLOCK_K=128, num_warps=16")
-    print("  - Deeper pipelines: num_stages=4-5")
-    print("  - Direct offset broadcasting (reduced register pressure)")
+    print("  - Descriptor loads map to TMA hardware")
+    print("  - Double-buffered pipeline (prefetch-next → compute-current → swap)")
+    print("  - Warp specialization tuning (num_consumer_groups / num_buffers_warp_spec)")
+    print("  - Autotune explores BLOCK_K up to 128 with NUM_STAGES 2-3")
+    print("  - Accumulators live in TMEM (reduces register pressure)")
     
     print("\n[3] When to Use TMA")
     print("  Best for:")

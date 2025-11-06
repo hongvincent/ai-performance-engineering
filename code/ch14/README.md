@@ -8,12 +8,12 @@ PyTorch 2.0+ includes a powerful compiler (`torch.compile`) and Triton for writi
 
 After completing this chapter, you can:
 
-- ✅ Use `torch.compile` for automatic optimization
-- ✅ Understand compiler modes and when to use each
-- ✅ Write custom Triton kernels in Python
-- ✅ Apply Triton for fused operations and custom algorithms
-- ✅ Recognize when torch.compile helps vs hurts performance
-- ✅ Debug and optimize compiled code
+- [OK] Use `torch.compile` for automatic optimization
+- [OK] Understand compiler modes and when to use each
+- [OK] Write custom Triton kernels in Python
+- [OK] Apply Triton for fused operations and custom algorithms
+- [OK] Recognize when torch.compile helps vs hurts performance
+- [OK] Debug and optimize compiled code
 
 ## Prerequisites
 
@@ -35,13 +35,13 @@ After completing this chapter, you can:
 
 ### When torch.compile Helps
 
-✅ **Good candidates:**
+[OK] **Good candidates:**
 - Small to medium models (1-10B parameters)
 - Many element-wise operations
 - Custom operations without optimized kernels
 - Inference workloads
 
-❌ **Poor candidates:**
+ERROR: **Poor candidates:**
 - Very large models (40B+) - memory-bound, not compute-bound
 - Already using optimized ops (cuDNN, cuBLAS)
 - Dynamic shapes
@@ -104,15 +104,15 @@ for mode in modes:
 **Expected results (1B model)**:
 ```
 Eager mode:          15.2 ms/iter
-default:             14.8 ms/iter (1.03x) ✅
-reduce-overhead:     13.1 ms/iter (1.16x) ✅
-max-autotune:        12.9 ms/iter (1.18x) ✅
+default:             14.8 ms/iter (1.03x) [OK]
+reduce-overhead:     13.1 ms/iter (1.16x) [OK]
+max-autotune:        12.9 ms/iter (1.18x) [OK]
 ```
 
 **Reality check (40B model)**:
 ```
 Eager mode:          285 ms/iter
-default:             287 ms/iter (0.99x) ❌ Slower!
+default:             287 ms/iter (0.99x) ERROR: Slower!
 ```
 
 **Why 40B is slower?** Memory-bound. torch.compile optimizes compute, but can't overcome memory bandwidth limits.
@@ -278,11 +278,11 @@ python3 triton_fp8_advanced.py
 
 ---
 
-### 4. `triton_tma_blackwell.py` - TMA in Triton (Blackwell)
+### 4. `triton_tma_blackwell.py` - TMA in Triton (NVIDIA GPU)
 
-**Purpose**: Use Triton's TMA (Tensor Memory Accelerator) features on Blackwell.
+**Purpose**: Use Triton's TMA (Tensor Memory Accelerator) features on NVIDIA GPU.
 
-**Note**: TMA descriptor APIs currently have driver issues on B200/GB10. This example demonstrates the pattern for when it's fixed.
+**TMA (Tensor Memory Accelerator) is supported on modern NVIDIA GPUs. This example demonstrates the pattern for when it's fixed.
 
 ```python
 @triton.jit
@@ -294,7 +294,7 @@ def tma_load_kernel(
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
     
-    # TMA load (hardware-accelerated on Blackwell)
+    # TMA load (hardware-accelerated on NVIDIA GPU)
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     
@@ -320,9 +320,11 @@ python3 triton_tma_blackwell.py
 
 ---
 
-### 5. `test_blackwell_optimizations.py` - Blackwell-Specific Features
+### 5. NVIDIA GPU-Specific Features Testing
 
-**Purpose**: Test and benchmark Blackwell-specific optimizations.
+**Purpose**: Test and benchmark NVIDIA GPU-specific optimizations.
+
+The comprehensive test suite is located in `tests/test_blackwell_optimizations.py`:
 
 ```python
 import torch
@@ -333,7 +335,7 @@ def test_tensor_core_performance():
     a_fp16 = torch.randn(4096, 4096, dtype=torch.float16, device='cuda')
     b_fp16 = torch.randn(4096, 4096, dtype=torch.float16, device='cuda')
     
-    # FP8 Tensor Cores (Blackwell)
+    # FP8 Tensor Cores (NVIDIA GPU)
     a_fp8 = a_fp16.to(torch.float8_e4m3fn)
     b_fp8 = b_fp16.to(torch.float8_e4m3fn)
     
@@ -344,7 +346,12 @@ def test_tensor_core_performance():
 
 **How to run**:
 ```bash
-python3 test_blackwell_optimizations.py
+# Run comprehensive test suite
+pytest tests/test_blackwell_optimizations.py -v
+
+# Run specific test categories
+pytest tests/test_blackwell_optimizations.py -k test_fp8
+pytest tests/test_blackwell_optimizations.py -m 'not slow'
 ```
 
 ---
@@ -403,8 +410,8 @@ python3 triton_examples.py
 python3 triton_fp8_advanced.py
 python3 triton_tma_blackwell.py
 
-# Blackwell optimizations
-python3 test_blackwell_optimizations.py
+# NVIDIA GPU optimizations (comprehensive test suite)
+pytest tests/test_blackwell_optimizations.py -v
 
 # Profile compiled code
 python3 ../../common/profiling/profile_pytorch.sh ./torch_compiler_examples.py
@@ -422,7 +429,7 @@ python3 ../../common/profiling/profile_pytorch.sh ./torch_compiler_examples.py
 
 4. **Triton bridges Python and GPU**: Write high-performance kernels without learning CUDA C++. 90-95% of hand-tuned performance.
 
-5. **FP8 on Blackwell is powerful**: 2x faster than FP16 with Tensor Cores. Use Triton or torch.float8_e4m3fn.
+5. **FP8 on NVIDIA GPU is powerful**: 2x faster than FP16 with Tensor Cores. Use Triton or torch.float8_e4m3fn.
 
 6. **Dynamic shapes hurt compilation**: Compiler assumes static shapes. Dynamic shapes cause recompilation.
 
@@ -483,7 +490,5 @@ Learn about:
 
 ---
 
-**Chapter Status**: ✅ Complete (TMA awaiting driver fix)  
-**Last Updated**: November 3, 2025  
-**Tested On**: 8x NVIDIA B200 GPUs, PyTorch 2.9, Triton 2.3, CUDA 13.0  
-**Note**: torch.compile may be slower on very large models (40B+)
+**Chapter Status**: [OK] Complete
+
