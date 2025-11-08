@@ -281,6 +281,19 @@ cudaLaunchKernelEx(&config, cluster_kernel, ...);
 make
 ```
 
+**Benchmarks**: The `baseline_cluster_group` binary launches pairs of regular
+thread blocks that each recompute the same data (sum vs sum-of-squares).
+`optimized_cluster_group` enables thread block clusters so block 1 reuses the
+shared memory tile loaded by block 0 through distributed shared memory, cutting
+the redundant global loads in half. Both binaries integrate with the harness via
+`baseline_cluster_group.py` / `optimized_cluster_group.py`, so `python3 compare.py`
+now measures an actual speedup when cluster hardware is available.
+
+> **Hardware note:** `optimized_cluster_group.cu` requires distributed shared memory (DSM). On stacks where DSM is currently disabled
+> (e.g., GB10 with the shipping CUDA 13 driver), the binary probes the feature and exits with a `SKIPPED: Distributed shared memory unavailable…`
+> message so the harness can continue to the next example. Use `make cluster_group_no_dsm` to build `cluster_group_no_dsm_sm<arch>`, a
+> global-memory fallback that demonstrates the same workflow without DSM while you wait for driver support.
+
 ---
 
 ###  TMA for Async Loads
@@ -512,4 +525,3 @@ Learn about:
 ---
 
 **Chapter Status**: [OK] Complete
-

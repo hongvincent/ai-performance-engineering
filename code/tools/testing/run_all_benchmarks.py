@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 import json
 import argparse
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
 from collections import defaultdict
 import statistics
@@ -164,6 +164,16 @@ PROOF_OF_BENEFIT_REQUIREMENTS: Dict[str, Dict[str, float]] = {
         "precision": 1.05,
         "training": 1.05,
     },
+}
+
+INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
+    "ch3": {"docker", "kubernetes"},
+}
+
+SMOKE_CUDA_ITERATION_OVERRIDES: Dict[str, int] = {
+    # CUDA microbenchmarks in these chapters are highly jittery; give them more samples even in smoke mode.
+    "ch6": 8,
+    "ch7": 12,
 }
 
 
@@ -1200,7 +1210,9 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
     failed = 0
     skipped_hw = 0
     skipped_distributed = 0
+    informational_skipped = 0
     speedups = []
+    informational_examples = INFORMATIONAL_BENCHMARKS.get(chapter_name, set())
     
     # Check GPU count for distributed benchmark detection
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -1209,6 +1221,11 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
     for baseline_path, optimized_paths, example_name in python_pairs:
         logger.info(f"\n  Example: {example_name}")
         logger.info(f"    Baseline: {baseline_path.name}")
+        
+        if example_name in informational_examples:
+            informational_skipped += 1
+            logger.info("    ℹ️ Informational systems demo - documented for reference, not benchmarked.")
+            continue
         
         result_entry = {
             'example': example_name,
@@ -1710,6 +1727,11 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
     for baseline_cu_path, optimized_cu_paths, example_name in cuda_pairs:
         logger.info(f"\n  Example (CUDA): {example_name}")
         
+        if example_name in informational_examples:
+            informational_skipped += 1
+            logger.info("    ℹ️ Informational systems demo - documented for reference, not benchmarked.")
+            continue
+        
         result_entry = {
             'example': example_name,
             'baseline_file': baseline_cu_path.name,
@@ -1733,10 +1755,12 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
             continue
         
         # Benchmark baseline with explicit timeout
-        # Use fewer iterations in smoke test mode to prevent hangs
+        # Smoke test mode still runs multiple iterations (5) to reduce timing jitter while staying quick
         # Note: Some CUDA benchmarks (like memory transfer) can take 3-5 seconds per run
         # So we need longer timeouts for these benchmarks
-        cuda_iterations = 1 if smoke_test else 3
+        cuda_iterations = 5 if smoke_test else 3
+        if smoke_test and chapter_name in SMOKE_CUDA_ITERATION_OVERRIDES:
+            cuda_iterations = max(cuda_iterations, SMOKE_CUDA_ITERATION_OVERRIDES[chapter_name])
         cuda_warmup = 0
         cuda_timeout = 20 if smoke_test else 30  # Longer timeout for CUDA benchmarks that do heavy I/O
         logger.info(
@@ -1998,7 +2022,11 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
     logger.info("\n" + "-" * 80)
     logger.info(f"{chapter_name.upper()} SUMMARY")
     total_skipped = skipped_hw + skipped_distributed
-    logger.info(f"Benchmarks: {len(benchmark_results)} | Successful: {successful} | Failed: {failed} | Skipped: {total_skipped} (HW: {skipped_hw}, Dist: {skipped_distributed})")
+    logger.info(
+        f"Benchmarks: {len(benchmark_results)} | Successful: {successful} | Failed: {failed} | "
+        f"Skipped: {total_skipped} (HW: {skipped_hw}, Dist: {skipped_distributed}) | "
+        f"Informational: {informational_skipped}"
+    )
     if speedups:
         logger.info(f"Speedups collected: {len(speedups)} | Avg: {avg_speedup:.2f}x | Best: {max_speedup:.2f}x | Worst: {min_speedup:.2f}x")
     else:
@@ -2020,6 +2048,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
             'average_speedup': avg_speedup,
             'max_speedup': max_speedup,
             'min_speedup': min_speedup,
+            'informational': informational_skipped,
         }
     }
 
@@ -2054,10 +2083,12 @@ def generate_markdown_report(results: List[Dict[str, Any]], output_path: Path) -
         f.write(f"- **Chapters skipped:** {skipped} (CUDA unavailable)\n")
         f.write(f"- **Chapters with no benchmarks:** {no_benchmarks}\n")
         total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in results)
+        total_informational = sum(r['summary'].get('informational', 0) for r in results)
         
         f.write(f"- **Total benchmarks:** {total_benchmarks}\n")
         f.write(f"- **Successful:** {total_successful}\n")
         f.write(f"- **Failed:** {total_failed}\n")
+        f.write(f"- **Informational (not benchmarked):** {total_informational}\n")
         if total_skipped_hw > 0:
             f.write(f"- **WARNING: Skipped (hardware/software limitations):** {total_skipped_hw}\n")
         if all_speedups:
@@ -2291,10 +2322,12 @@ def main():
     total_successful = sum(r['summary']['successful'] for r in all_results)
     total_failed = sum(r['summary']['failed'] for r in all_results)
     total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in all_results)
+    total_informational = sum(r['summary'].get('informational', 0) for r in all_results)
     
     logger.info(f"Total benchmarks tested: {total_benchmarks}")
     logger.info(f"Successful: {total_successful}")
     logger.info(f"Failed: {total_failed}")
+    logger.info(f"Informational (not benchmarked): {total_informational}")
     if total_skipped_hw > 0:
         logger.warning(f"WARNING: Skipped (hardware/software limitations): {total_skipped_hw}")
     

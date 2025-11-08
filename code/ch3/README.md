@@ -60,6 +60,12 @@ torchrun [script]
 
 **Expected impact**: **5-15% throughput improvement** for data-intensive workloads.
 
+**Benchmarks**: `baseline_numa_unaware.py` vs `optimized_numa_aware.py` now run inside the
+standard harness. The optimized variant reads the GPU's NUMA node from sysfs,
+binds the process via `os.sched_setaffinity`, and enforces `libnuma`
+memory policies before allocating host buffers, so transfers stay on the GPU's
+local node. Run `python3 compare.py --example numa` to capture proof-of-benefit.
+
 ---
 
 ###  System-Level Optimizations
@@ -425,4 +431,3 @@ Learn about:
 ---
 
 **Chapter Status**: [OK] Complete
-

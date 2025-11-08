@@ -1,74 +1,281 @@
-// optimized_cluster_group.cu -- Cluster launch (optimized, requires Blackwell).
+// optimized_cluster_group.cu -- Cluster DSMEM demo with fail-fast probe.
 
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
 #include <cstdio>
+#include <vector>
+
+#include "cluster_group_common.cuh"
 
 namespace cg = cooperative_groups;
 
-// Kernel using thread block clusters
-__global__ void __cluster_dims__(2, 1, 1) cluster_sum_kernel(const float *in, float *out, int elems_per_block) {
+#define CUDA_CHECK(call)                                                        \
+    do {                                                                        \
+        cudaError_t _status = (call);                                           \
+        if (_status != cudaSuccess) {                                           \
+            fprintf(stderr, "CUDA error %s (%d) at %s:%d\n",                    \
+                    cudaGetErrorString(_status), _status, __FILE__, __LINE__);  \
+            std::abort();                                                       \
+        }                                                                       \
+    } while (0)
+
+__global__ void __cluster_dims__(kClusterBlocks, 1, 1)
+cluster_dual_kernel(const float* __restrict__ input,
+                    float* __restrict__ chunk_sum,
+                    float* __restrict__ chunk_sq,
+                    int elems_per_block,
+                    int total_elements) {
     cg::cluster_group cluster = cg::this_cluster();
-    cg::thread_block cta = cg::this_thread_block();
+    cg::thread_block block = cg::this_thread_block();
 
-    extern __shared__ float sdata[];
+    extern __shared__ float shared[];
+    float* tile = shared;
+    float* reductions = shared + elems_per_block;
 
-    float sum = 0.0f;
-    int base = blockIdx.x * elems_per_block;
-    for (int i = threadIdx.x; i < elems_per_block; i += blockDim.x) {
-        sum += in[base + i];
+    const int chunk_id = blockIdx.x / kClusterBlocks;
+    const int cluster_rank = cluster.block_rank();
+    const size_t base = static_cast<size_t>(chunk_id) * elems_per_block;
+    if (base >= static_cast<size_t>(total_elements)) {
+        return;
+    }
+    const int remaining = total_elements - static_cast<int>(base);
+    const int valid = remaining < elems_per_block ? remaining : elems_per_block;
+
+    if (cluster_rank == 0) {
+        for (int i = threadIdx.x; i < valid; i += blockDim.x) {
+            tile[i] = input[base + i];
+        }
     }
 
-    sdata[threadIdx.x] = sum;
-    cta.sync();
+    cluster.sync();
+    const float* source_tile = (cluster_rank == 0) ? tile : cluster.map_shared_rank(tile, 0);
+
+    float local = 0.0f;
+    for (int i = threadIdx.x; i < valid; i += blockDim.x) {
+        const float value = source_tile[i];
+        local += (cluster_rank == 0) ? value : value * value;
+    }
+
+    reductions[threadIdx.x] = local;
+    block.sync();
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
         if (threadIdx.x < stride) {
-            sdata[threadIdx.x] += sdata[threadIdx.x + stride];
+            reductions[threadIdx.x] += reductions[threadIdx.x + stride];
         }
-        cta.sync();
+        block.sync();
     }
 
     if (threadIdx.x == 0) {
-        out[blockIdx.x] = sdata[0];
+        if (cluster_rank == 0) {
+            chunk_sum[chunk_id] = reductions[0];
+        } else {
+            chunk_sq[chunk_id] = reductions[0];
+        }
+    }
+}
+
+__global__ void __cluster_dims__(2, 1, 1)
+dsm_probe_kernel(float* out) {
+    cg::cluster_group cluster = cg::this_cluster();
+    cg::thread_block block = cg::this_thread_block();
+    extern __shared__ float buffer[];
+
+    if (cluster.block_rank() == 0) {
+        if (threadIdx.x == 0) {
+            buffer[0] = 123.0f;
+        }
     }
 
-    cluster.sync();  // Cluster-wide synchronization
+    cluster.sync();
+
+    if (cluster.block_rank() == 1 && threadIdx.x == 0) {
+        float* remote = cluster.map_shared_rank(buffer, 0);
+        out[0] = remote[0];
+    }
+}
+
+struct ProbeResult {
+    bool ok;
+    const char* stage;
+    cudaError_t error;
+};
+
+ProbeResult probe_dsm_support() {
+    float* d_out = nullptr;
+    cudaError_t alloc_err = cudaMalloc(&d_out, sizeof(float));
+    if (alloc_err != cudaSuccess) {
+        return {false, "cudaMalloc", alloc_err};
+    }
+
+    cudaLaunchConfig_t cfg{};
+    cfg.gridDim = dim3(2);
+    cfg.blockDim = dim3(32);
+    cfg.dynamicSmemBytes = 32 * sizeof(float);
+
+    cudaKernel_t kernel;
+    cudaError_t err = cudaGetKernel(&kernel, dsm_probe_kernel);
+    if (err != cudaSuccess) {
+        cudaFree(d_out);
+        return {false, "cudaGetKernel", err};
+    }
+
+    void* args[] = {&d_out};
+    err = cudaLaunchKernelExC(&cfg, reinterpret_cast<void*>(kernel), args);
+    if (err != cudaSuccess) {
+        cudaFree(d_out);
+        return {false, "cudaLaunchKernelExC", err};
+    }
+
+    err = cudaDeviceSynchronize();
+    cudaFree(d_out);
+    if (err != cudaSuccess) {
+        return {false, "cudaDeviceSynchronize", err};
+    }
+    return {true, nullptr, cudaSuccess};
 }
 
 int main() {
-    const int N = 1 << 20;
-    const int elems_per_block = 1024;
-    const int num_blocks = (N + elems_per_block - 1) / elems_per_block;
-    
-    float *d_in, *d_out;
-    cudaMalloc(&d_in, N * sizeof(float));
-    cudaMalloc(&d_out, num_blocks * sizeof(float));
-    
-    dim3 block(256);
-    dim3 grid(num_blocks);
-    size_t smem = 256 * sizeof(float);
-    
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    
-    const int iterations = 100;
-    cudaEventRecord(start);
-    for (int i = 0; i < iterations; i++) {
-        cluster_sum_kernel<<<grid, block, smem>>>(d_in, d_out, elems_per_block);
+#if !defined(__CUDACC_VER_MAJOR__) || (__CUDACC_VER_MAJOR__ < 13)
+    fprintf(stderr, "SKIPPED: CUDA 13+ required for cluster DSMEM support.\n");
+    return 3;
+#endif
+
+    CUDA_CHECK(cudaSetDevice(0));
+
+    cudaDeviceProp prop{};
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+
+    int cluster_launch = 0;
+#ifdef cudaDevAttrClusterLaunch
+    CUDA_CHECK(cudaDeviceGetAttribute(&cluster_launch, cudaDevAttrClusterLaunch, 0));
+#endif
+    const bool supports_clusters = (cluster_launch > 0) || (prop.major >= 9);
+    if (!supports_clusters) {
+        fprintf(stderr,
+                "SKIPPED: Thread block clusters unsupported on %s (SM %d.%d).\n",
+                prop.name,
+                prop.major,
+                prop.minor);
+        return 3;
     }
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    
-    float ms;
-    cudaEventElapsedTime(&ms, start, stop);
-    printf("Cluster launch (optimized): %.2f ms\n", ms / iterations);
-    
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    cudaFree(d_in);
-    cudaFree(d_out);
-    
+
+    ProbeResult probe = probe_dsm_support();
+    if (!probe.ok) {
+        fprintf(stderr,
+                "SKIPPED: Distributed shared memory unavailable on %s (SM %d.%d). Stage=%s error=%s\n",
+                prop.name,
+                prop.major,
+                prop.minor,
+                probe.stage,
+                cudaGetErrorString(probe.error));
+        fprintf(stderr,
+                "Use cluster_group_no_dsm_sm%03d for a no-DSMEM demonstration on this system.\n",
+                prop.major * 10 + prop.minor);
+        return 3;
+    }
+
+    std::vector<float> h_input(kTotalElements);
+    initialize_input(h_input);
+
+    const int chunks = num_chunks();
+    const size_t input_bytes = h_input.size() * sizeof(float);
+    const size_t result_bytes = chunks * sizeof(float);
+
+    float* d_input = nullptr;
+    float* d_sum = nullptr;
+    float* d_sq = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_input, input_bytes));
+    CUDA_CHECK(cudaMalloc(&d_sum, result_bytes));
+    CUDA_CHECK(cudaMalloc(&d_sq, result_bytes));
+    CUDA_CHECK(cudaMemcpy(d_input, h_input.data(), input_bytes, cudaMemcpyHostToDevice));
+
+    dim3 block(kThreadsPerBlock);
+    dim3 grid(chunks * kClusterBlocks);
+    const size_t shared_bytes = (kElementsPerBlock + kThreadsPerBlock) * sizeof(float);
+
+    cudaLaunchAttribute attrs[2]{};
+    int attr_count = 0;
+#ifdef cudaLaunchAttributeClusterDimension
+    attrs[attr_count].id = cudaLaunchAttributeClusterDimension;
+    attrs[attr_count].val.clusterDim.x = kClusterBlocks;
+    attrs[attr_count].val.clusterDim.y = 1;
+    attrs[attr_count].val.clusterDim.z = 1;
+    ++attr_count;
+#endif
+#ifdef cudaLaunchAttributeNonPortableClusterSizeAllowed
+    attrs[attr_count].id = cudaLaunchAttributeNonPortableClusterSizeAllowed;
+    attrs[attr_count].val.nonPortableClusterSizeAllowed = 1;
+    ++attr_count;
+#endif
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        cluster_dual_kernel,
+        cudaFuncAttributeNonPortableClusterSizeAllowed,
+        1));
+
+    cudaLaunchConfig_t config{};
+    config.gridDim = grid;
+    config.blockDim = block;
+    config.dynamicSmemBytes = shared_bytes;
+    config.stream = nullptr;
+    config.attrs = attr_count ? attrs : nullptr;
+    config.numAttrs = attr_count;
+
+    int elems_per_block = kElementsPerBlock;
+    int total_elements = kTotalElements;
+    void* args[] = {&d_input, &d_sum, &d_sq, &elems_per_block, &total_elements};
+
+    cudaKernel_t kernel;
+    CUDA_CHECK(cudaGetKernel(&kernel, cluster_dual_kernel));
+    void* func = reinterpret_cast<void*>(kernel);
+
+    cudaEvent_t start, stop;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
+
+    CUDA_CHECK(cudaEventRecord(start));
+    for (int i = 0; i < kIterations; ++i) {
+        CUDA_CHECK(cudaLaunchKernelExC(&config, func, args));
+    }
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+
+    float elapsed_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+    printf("Cluster launch (DSM optimized): %.2f ms\n", elapsed_ms / kIterations);
+
+    // Single run for verification
+    CUDA_CHECK(cudaMemset(d_sum, 0, result_bytes));
+    CUDA_CHECK(cudaMemset(d_sq, 0, result_bytes));
+    CUDA_CHECK(cudaLaunchKernelExC(&config, func, args));
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    std::vector<float> h_sum(chunks, 0.0f);
+    std::vector<float> h_squares(chunks, 0.0f);
+    CUDA_CHECK(cudaMemcpy(h_sum.data(), d_sum, result_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_squares.data(), d_sq, result_bytes, cudaMemcpyDeviceToHost));
+
+    std::vector<float> ref_sum;
+    std::vector<float> ref_squares;
+    compute_reference(h_input, ref_sum, ref_squares, kElementsPerBlock);
+
+    auto max_diff = [](const std::vector<float>& a, const std::vector<float>& b) {
+        float diff = 0.0f;
+        const std::size_t limit = std::min(a.size(), b.size());
+        for (std::size_t i = 0; i < limit; ++i) {
+            diff = std::max(diff, std::abs(a[i] - b[i]));
+        }
+        return diff;
+    };
+
+    printf("Verification (optimized): max |sum diff|=%.6f, |sq diff|=%.6f\n",
+           max_diff(h_sum, ref_sum),
+           max_diff(h_squares, ref_squares));
+
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_sum));
+    CUDA_CHECK(cudaFree(d_sq));
     return 0;
 }
-

@@ -6,7 +6,27 @@
 #include <cmath>
 #include "profiling_helpers.cuh"
 
-namespace {
+struct GraphCache {
+    cudaGraphExec_t exec = nullptr;
+    cudaStream_t stream = nullptr;
+    int device = -1;
+    int64_t num_elements = -1;
+
+    void reset() {
+        if (exec != nullptr) {
+            cudaGraphExecDestroy(exec);
+            exec = nullptr;
+        }
+        if (stream != nullptr) {
+            cudaStreamDestroy(stream);
+            stream = nullptr;
+        }
+        device = -1;
+        num_elements = -1;
+    }
+};
+
+static GraphCache g_graph_cache;
 
 #define CHECK_CUDA(call)                                                       \
     do {                                                                       \
@@ -15,8 +35,6 @@ namespace {
                     "CUDA error at ", __FILE__, ":", __LINE__, " - ",          \
                     cudaGetErrorString(_status));                              \
     } while (0)
-
-} // anonymous namespace
 
 __global__ void kernel_a_kernel(float* data, int n) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -72,52 +90,52 @@ void graph_replay(torch::Tensor data, int iterations) {
     int n = data.size(0);
     int threads_per_block = 256;
     int num_blocks = (n + threads_per_block - 1) / threads_per_block;
-    
-    // Create a non-blocking stream for graph capture (required for CUDA graphs)
-    cudaStream_t stream = nullptr;
-    CHECK_CUDA(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    
-    cudaGraph_t graph = nullptr;
-    cudaGraphExec_t exec = nullptr;
-    
-    try {
-        CHECK_CUDA(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
-        kernel_a_kernel<<<num_blocks, threads_per_block, 0, stream>>>(data.data_ptr<float>(), n);
-        kernel_b_kernel<<<num_blocks, threads_per_block, 0, stream>>>(data.data_ptr<float>(), n);
-        kernel_c_kernel<<<num_blocks, threads_per_block, 0, stream>>>(data.data_ptr<float>(), n);
-        CHECK_CUDA(cudaGetLastError());
-        CHECK_CUDA(cudaStreamEndCapture(stream, &graph));
-        CHECK_CUDA(cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0));
-        
-        {
-            PROFILE_KERNEL_LAUNCH("graph_replay");
-            for (int i = 0; i < iterations; ++i) {
-                CHECK_CUDA(cudaGraphLaunch(exec, stream));
+
+    bool needs_capture = (g_graph_cache.exec == nullptr) ||
+                         (g_graph_cache.device != device_id) ||
+                         (g_graph_cache.num_elements != n);
+
+    if (needs_capture) {
+        // Reset any previous cached graph/stream
+        g_graph_cache.reset();
+
+        CHECK_CUDA(cudaStreamCreateWithFlags(&g_graph_cache.stream, cudaStreamNonBlocking));
+        cudaGraph_t graph = nullptr;
+
+        try {
+            CHECK_CUDA(cudaStreamBeginCapture(g_graph_cache.stream, cudaStreamCaptureModeGlobal));
+            kernel_a_kernel<<<num_blocks, threads_per_block, 0, g_graph_cache.stream>>>(data.data_ptr<float>(), n);
+            kernel_b_kernel<<<num_blocks, threads_per_block, 0, g_graph_cache.stream>>>(data.data_ptr<float>(), n);
+            kernel_c_kernel<<<num_blocks, threads_per_block, 0, g_graph_cache.stream>>>(data.data_ptr<float>(), n);
+            CHECK_CUDA(cudaGetLastError());
+            CHECK_CUDA(cudaStreamEndCapture(g_graph_cache.stream, &graph));
+            CHECK_CUDA(cudaGraphInstantiate(&g_graph_cache.exec, graph, nullptr, nullptr, 0));
+            CHECK_CUDA(cudaGraphDestroy(graph));
+            g_graph_cache.device = device_id;
+            g_graph_cache.num_elements = n;
+        } catch (...) {
+            if (graph != nullptr) {
+                cudaGraphDestroy(graph);
             }
+            g_graph_cache.reset();
+            throw;
         }
-        
-        // Synchronize only the stream we're using (not the entire device)
-        CHECK_CUDA(cudaStreamSynchronize(stream));
-    } catch (...) {
-        if (exec != nullptr) {
-            cudaGraphExecDestroy(exec);
-        }
-        if (graph != nullptr) {
-            cudaGraphDestroy(graph);
-        }
-        if (stream != nullptr) {
-            cudaStreamDestroy(stream);
-        }
-        throw;
     }
-    
-    cudaGraphExecDestroy(exec);
-    cudaGraphDestroy(graph);
-    cudaStreamDestroy(stream);
+
+    if (g_graph_cache.exec == nullptr || g_graph_cache.stream == nullptr) {
+        TORCH_CHECK(false, "CUDA graph cache not initialized");
+    }
+
+    {
+        PROFILE_KERNEL_LAUNCH("graph_replay");
+        for (int i = 0; i < iterations; ++i) {
+            CHECK_CUDA(cudaGraphLaunch(g_graph_cache.exec, g_graph_cache.stream));
+        }
+    }
+    CHECK_CUDA(cudaStreamSynchronize(g_graph_cache.stream));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("separate_kernel_launches", &separate_kernel_launches, "Separate kernel launches (baseline)");
     m.def("graph_replay", &graph_replay, "CUDA graph replay (optimized)");
 }
-

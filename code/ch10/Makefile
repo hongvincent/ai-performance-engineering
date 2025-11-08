@@ -11,12 +11,18 @@ COMMON_HEADERS = ../common/headers/arch_detection.cuh ../common/headers/tma_help
 
 # Explicit list of CUDA examples
 BASE_TARGETS = baseline_cluster_group optimized_cluster_group \
+               cluster_group_no_dsm \
                baseline_cooperative_persistent optimized_cooperative_persistent \
-               baseline_double_buffered_pipeline optimized_double_buffered_pipeline
+               baseline_double_buffered_pipeline optimized_double_buffered_pipeline \
+               warp_specialized_cluster_pipeline
 
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
-.PHONY: all clean test compare b200 gb10 b300 gb300 profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS) run test-gds demo help
+.PHONY: all clean test compare b200 gb10 b300 gb300 profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS) run test-gds demo help $(BASE_TARGETS)
+
+# Convenience targets without architecture suffix (delegate to active ARCH)
+$(BASE_TARGETS):
+	@$(MAKE) $@$(SUFFIX)
 
 all: $(TARGETS)
 	@echo "Building all Chapter 10 examples with $(ARCH) (CUDA $(CUDA_VERSION))"
@@ -24,11 +30,14 @@ all: $(TARGETS)
 	@echo "✓ Built $(words $(BASE_TARGETS)) CUDA examples"
 
 # Explicit build rules for each example
-baseline_cluster_group$(SUFFIX): baseline_cluster_group.cu $(COMMON_HEADERS)
-	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+baseline_cluster_group$(SUFFIX): baseline_cluster_group.cu cluster_group_common.cuh $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) -rdc=true $(INCLUDES) -o $@ $<
 
-optimized_cluster_group$(SUFFIX): optimized_cluster_group.cu $(COMMON_HEADERS)
-	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+optimized_cluster_group$(SUFFIX): optimized_cluster_group.cu cluster_group_common.cuh $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) -rdc=true $(INCLUDES) -o $@ $<
+
+cluster_group_no_dsm$(SUFFIX): cluster_group_no_dsm.cu cluster_group_common.cuh $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) -rdc=true $(INCLUDES) -o $@ $<
 
 baseline_cooperative_persistent$(SUFFIX): baseline_cooperative_persistent.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
@@ -40,6 +49,9 @@ baseline_double_buffered_pipeline$(SUFFIX): baseline_double_buffered_pipeline.cu
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
 
 optimized_double_buffered_pipeline$(SUFFIX): optimized_double_buffered_pipeline.cu $(COMMON_HEADERS)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+warp_specialized_cluster_pipeline$(SUFFIX): warp_specialized_cluster_pipeline.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
 
 # Legacy target name for double_buffered_pipeline (without suffix)
@@ -156,4 +168,5 @@ help:
 
 clean:
 	rm -f $(addsuffix _sm100,$(BASE_TARGETS)) $(addsuffix _sm121,$(BASE_TARGETS)) *.o *.so *.a double_buffered_pipeline
+	rm -f warp_spec_cluster_test warp_specialized_cluster_pipeline
 	rm -f nsys_profile_* ncu_profile_* hta_profile_* perf.data_* comprehensive_*

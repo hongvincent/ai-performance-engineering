@@ -1,4 +1,3 @@
-# Book materials (not publicly exposed)
 book/
 benchmark_test_results.json
 benchmark_test_results.md
@@ -24,6 +23,7 @@ benchmark_results_*.json
 benchmark_results_*.json
 benchmark_test_results_*.json
 benchmark_test_results_*.json
+DUPLICATE_ANALYSIS.md
 
 # Python
 __pycache__/
@@ -148,6 +148,10 @@ ch*/*_sm[0-9]*
 ch*/*_sm[0-9][0-9]*
 # Test executables (manually compiled test programs)
 ch*/test_*
+# Build targets without architecture suffix (base names)
+ch*/warp_spec_cluster_test
+ch*/warp_specialized_cluster_pipeline_multistream
+ch*/warp_specialized_two_pipelines_multistream
 # Explicitly allow Python and CUDA source files
 !ch*/*.py
 !ch*/*.cu

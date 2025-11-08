@@ -418,6 +418,8 @@ All CUDA examples follow the [source file] / [source file] pattern:
 2. **Graph Bandwidth** ([source file] / [source file])
    - Separate kernel launches vs CUDA graph execution
    - Measures bandwidth improvements from graph capture
+   - Harness-ready via `baseline_graph_bandwidth.py` / `optimized_graph_bandwidth.py`
+     (PyTorch CUDA extension loads automatically and validates identical bytes moved)
 
 **Run comparisons:**
 ```bash
@@ -519,4 +521,3 @@ Learn about:
 ---
 
 **Chapter Status**: [OK] Complete
-

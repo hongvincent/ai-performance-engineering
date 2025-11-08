@@ -106,6 +106,7 @@ profile-all: $(TARGETS)
 
 clean:
 	rm -f *_sm100 *_sm121 *.o *.so *.a
+	rm -f $(BASE_TARGETS)
 	rm -f nsys_profile_* ncu_profile_* hta_profile_* perf.data_* comprehensive_*
 
 # Run benchmarks comparing both architectures

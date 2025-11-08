@@ -42,7 +42,7 @@ class OptimizedCudaGraphsBenchmark(Benchmark):
         self.device = resolve_device()
         self.data = None
         self.N = 1 << 20  # 1M elements
-        self.iterations = 5
+        self.iterations = 50
         self._extension = None
     
     def setup(self) -> None:
@@ -112,4 +112,3 @@ if __name__ == '__main__':
     )
     result = harness.benchmark(benchmark)
     print(f"\nOptimized CUDA Graphs (Graph Replay): {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-
