@@ -2325,17 +2325,31 @@ if python3 "${PROJECT_ROOT}/tools/utilities/probe_hardware_capabilities.py" 2>/t
 import json
 import sys
 try:
-    with open('${PROJECT_ROOT}/artifacts/hardware_capabilities.json', 'r') as f:
-        data = json.load(f)
-    for device in data.get('devices', []):
-        print(f"  GPU {device.get('device_index', '?')}: {device.get('name', 'Unknown')}")
-        print(f"    Architecture: {device.get('architecture', 'Unknown')} (SM {device.get('compute_capability', '?')})")
-        print(f"    Memory: {device.get('total_memory_gb', 0):.2f} GB")
-        print(f"    SMs: {device.get('num_sms', '?')}")
-        print(f"    Tensor Cores: {device.get('tensor_cores', 'Unknown')}")
-        if device.get('features'):
-            features = device['features']
-            print(f"    Features: FP4={features.get('fp4', False)}, FP6={features.get('fp6', False)}, FP8={features.get('fp8', False)}, BF16={features.get('bf16', False)}")
+        with open('${PROJECT_ROOT}/artifacts/hardware_capabilities.json', 'r') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            devices = data.get('devices', [])
+        elif isinstance(data, list):
+            devices = data
+        else:
+            devices = []
+        for device in devices:
+            name = device.get('name', 'Unknown')
+            device_index = device.get('device_index', '?')
+            arch = device.get('architecture', 'Unknown')
+            compute = device.get('compute_capability', '?')
+            print(f"  GPU {device_index}: {name}")
+            print(f"    Architecture: {arch} (SM {compute})")
+            print(f"    Memory: {device.get('total_memory_gb', 0):.2f} GB")
+            print(f"    SMs: {device.get('num_sms', '?')}")
+            print(f"    Tensor Cores: {device.get('tensor_cores', 'Unknown')}")
+            features = device.get('features', {})
+            if isinstance(features, dict):
+                print(f"    Features: FP4={features.get('fp4', False)}, FP6={features.get('fp6', False)}, FP8={features.get('fp8', False)}, BF16={features.get('bf16', False)}")
+            elif isinstance(features, list):
+                joined = ', '.join(features)
+                if joined:
+                    print(f"    Features: {joined}")
 except Exception as e:
     print(f"  Error reading capabilities: {e}", file=sys.stderr)
 PY
