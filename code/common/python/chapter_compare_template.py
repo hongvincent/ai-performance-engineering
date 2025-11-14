@@ -48,7 +48,7 @@ except ImportError:
 __all__ = ['discover_benchmarks', 'load_benchmark', 'create_standard_metrics', 'profile_template']
 
 
-def load_benchmark(module_path: Path, timeout_seconds: int = 15) -> Optional[Benchmark]:
+def load_benchmark(module_path: Path, timeout_seconds: int = 60) -> Optional[Benchmark]:
     """Load benchmark from module by calling get_benchmark() function.
     
     Uses threading timeout to prevent hangs during module import or get_benchmark() calls.

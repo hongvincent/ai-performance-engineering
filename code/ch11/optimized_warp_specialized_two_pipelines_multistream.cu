@@ -14,14 +14,14 @@ namespace cg = cooperative_groups;
 
 constexpr int kWarpSize = 32;
 constexpr int kPipelineStages = 2;
-constexpr int kTileElems = 256;
+constexpr int kTileElems = 1024;
 constexpr bool kHasCuda13Pipeline = true;
 
 __device__ void compute_stage(const float* a, const float* b, float* c, int thread_idx, int stride) {
     for (int idx = thread_idx; idx < kTileElems; idx += stride) {
         float x = a[idx];
         float y = b[idx];
-        c[idx] = x * 2.0f + y;
+        c[idx] = x + y;
     }
 }
 
@@ -79,13 +79,13 @@ void warp_specialized_kernel_two_pipelines_multistream(const float* __restrict__
         pipe.consumer_wait();
         block.sync();
 
-        if (warp_id >= 1 && warp_id <= 3) {
+        if (warp_id >= 1 && warp_id <= 4) {
             compute_stage(a_ptr, b_ptr, c_ptr, threadIdx.x, blockDim.x);
         }
 
         block.sync();
 
-        if (warp_id == 4) {
+        if (warp_id == 5) {
             for (int idx = lane; idx < kTileElems; idx += kWarpSize) {
                 out_c[offset + idx] = c_ptr[idx];
             }

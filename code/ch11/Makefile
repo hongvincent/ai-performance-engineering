@@ -6,7 +6,8 @@ SUFFIX = $(TARGET_SUFFIX)
 # Base targets
 BASE_TARGETS = baseline_streams optimized_streams_ordered optimized_streams_warp_specialized \
                baseline_warp_specialized_multistream optimized_warp_specialized_multistream \
-               optimized_warp_specialized_two_pipelines_multistream_enhanced \
+               baseline_warp_specialized_two_pipelines_multistream \
+               optimized_warp_specialized_two_pipelines_multistream \
                warp_specialized_cluster_pipeline_multistream optimized_cluster_reduction_enhanced \
                optimized_kv_prefetch_pipeline_enhanced
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
@@ -20,9 +21,13 @@ all: $(TARGETS)
 %$(SUFFIX): %.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
-# Special rule for enhanced two-pipeline launcher (uses driver)
-optimized_warp_specialized_two_pipelines_multistream_enhanced$(SUFFIX): \
-	optimized_warp_specialized_two_pipelines_driver_enhanced.cu optimized_warp_specialized_two_pipelines_multistream_enhanced.cu
+# Special rules for dual-pipeline executables (use dedicated drivers)
+baseline_warp_specialized_two_pipelines_multistream$(SUFFIX): \
+	baseline_warp_specialized_two_pipelines_driver.cu baseline_warp_specialized_two_pipelines_common.cuh
+	$(NVCC) $(NVCC_FLAGS) -o $@ baseline_warp_specialized_two_pipelines_driver.cu
+
+optimized_warp_specialized_two_pipelines_multistream$(SUFFIX): \
+	optimized_warp_specialized_two_pipelines_driver.cu optimized_warp_specialized_two_pipelines_multistream.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
 # Architecture-specific targets

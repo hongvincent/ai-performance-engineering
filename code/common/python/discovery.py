@@ -20,17 +20,8 @@ def discover_benchmarks(chapter_dir: Path) -> List[Tuple[Path, List[Path], str]]
         Example: (Path('ch16/baseline_moe_dense.py'), [Path('ch16/optimized_moe_sparse.py')], 'moe')
     """
     pairs = []
-    baseline_files = []
-    for pattern in ("baseline_*.py", "baseline_*.cu"):
-        baseline_files.extend(chapter_dir.glob(pattern))
-    # Deduplicate when both globs overlap (unlikely but safe) while preserving order.
-    seen = set()
-    unique_baselines = []
-    for path in baseline_files:
-        if path not in seen:
-            unique_baselines.append(path)
-            seen.add(path)
-    baseline_files = unique_baselines
+    baseline_files = sorted(chapter_dir.glob("baseline_*.py"))
+
     example_names = {
         baseline_file.stem.replace("baseline_", "")
         for baseline_file in baseline_files
