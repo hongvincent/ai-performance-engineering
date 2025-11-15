@@ -136,10 +136,10 @@ code/ch1/README.md → code/ch1/README.ko.md
 - [x] code/README.ko.md
 - [x] docs/environment.ko.md
 
-### Phase 2 진행률: 0/3
-- [ ] docs/tooling-and-profiling.ko.md
-- [ ] code/common/README.ko.md
-- [ ] code/docs/benchmark_harness_guide.ko.md
+### Phase 2 진행률: 3/3 ✅ 완료
+- [x] docs/tooling-and-profiling.ko.md
+- [x] code/common/README.ko.md
+- [x] code/docs/benchmark_harness_guide.ko.md
 
 ### Phase 3 진행률: 0/20
 - [ ] code/ch1/README.ko.md through code/ch20/README.ko.md
