@@ -130,11 +130,11 @@ code/ch1/README.md → code/ch1/README.ko.md
 
 ## 진행 상황 추적
 
-### Phase 1 진행률: 0/4
-- [ ] README.ko.md
-- [ ] CONTRIBUTING.ko.md
-- [ ] code/README.ko.md
-- [ ] docs/environment.ko.md
+### Phase 1 진행률: 4/4 ✅ 완료
+- [x] README.ko.md
+- [x] CONTRIBUTING.ko.md
+- [x] code/README.ko.md
+- [x] docs/environment.ko.md
 
 ### Phase 2 진행률: 0/3
 - [ ] docs/tooling-and-profiling.ko.md
