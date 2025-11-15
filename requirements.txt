@@ -1,0 +1,26 @@
+# Python 패키지 요구사항
+# AI Performance Engineering 프로젝트
+
+# OpenAI SDK (필수)
+openai>=1.12.0
+
+# LangChain 생태계
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.20
+langgraph>=0.0.20
+
+# 벡터 저장소 (RAG 예제용)
+faiss-cpu>=1.7.4
+
+# 유틸리티
+tiktoken>=0.5.2  # 토큰 카운팅
+python-dotenv>=1.0.0  # 환경 변수 관리
+
+# 비동기 처리
+aiohttp>=3.9.0
+
+# 개발 도구 (선택사항)
+# pytest>=7.4.0
+# black>=23.0.0
+# flake8>=6.0.0
