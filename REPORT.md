@@ -3,7 +3,7 @@
 **프로젝트명**: AI Performance Engineering - 한국어 문서화 및 OpenAI 전환
 **버전**: 2.0.0
 **작성일**: 2025-01-15
-**브랜치**: `claude/add-korean-documentation-01JbCq7D8qQqu8rLMkE9gd3S`
+**브랜치**: `main`
 
 ---
 
@@ -427,8 +427,8 @@ Major v2.0 update:
 - README 완전 재작성
 ```
 
-**브랜치**: `claude/add-korean-documentation-01JbCq7D8qQqu8rLMkE9gd3S`
-**원격 저장소**: `origin/claude/add-korean-documentation-01JbCq7D8qQqu8rLMkE9gd3S`
+**브랜치**: `main`
+**원격 저장소**: `origin/main`
 **Status**: ✅ Pushed
 
 ---
